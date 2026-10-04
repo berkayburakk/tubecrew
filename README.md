@@ -55,7 +55,7 @@ Seedance gibi kredili bulut video modellerini kullanmadım; yapay zekâyla üret
 
 ## English
 
-The simple version of the production pipeline from the Berko YouTube video **"How I Make YouTube Videos With Claude Code"**.
+The simple version of the production pipeline from the Berko YouTube video **"How to Make a YouTube Video With Claude Code"**.
 
 - [`en/.claude/skills/video-produce/SKILL.md`](en/.claude/skills/video-produce/SKILL.md): the video production skill, nine steps from topic to private upload.
 - [`en/CLAUDE.md`](en/CLAUDE.md): a rules file example (no advice, no made-up evidence, every number has a source; every mistake becomes a lesson).
