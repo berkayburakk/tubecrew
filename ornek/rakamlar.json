@@ -1,0 +1,26 @@
+{
+  "_not": "Biçim örneği. Değerler ve linkler kurmacadır; kendi araştırmanızla doldurun.",
+  "yillik_gelir": {
+    "deger": 12.5,
+    "birim": "milyar $",
+    "tur": "resmi",
+    "kaynak": "Şirketin yıllık raporu",
+    "link": "https://example.com/yillik-rapor",
+    "erisim": "2026-10-01"
+  },
+  "yatirim_tutari": {
+    "deger": 3,
+    "birim": "milyar $",
+    "tur": "haber",
+    "kaynak": "Bir haber ajansı",
+    "link": "https://example.com/haber",
+    "erisim": "2026-10-01"
+  },
+  "yillik_buyume": {
+    "deger": 41,
+    "birim": "%",
+    "tur": "kendi hesabımız",
+    "hesap": "(bu yıl − geçen yıl) / geçen yıl; iki değer de rakamlar.json'da",
+    "erisim": "2026-10-01"
+  }
+}
