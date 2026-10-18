@@ -114,8 +114,8 @@ def rel_path(path: Path, base: Path) -> str:
         rel = os.path.relpath(str(Path(path).resolve()), str(Path(base).resolve()))
     except ValueError:  # different drive on Windows
         return Path(path).name
-    if os.path.isabs(rel):
-        return Path(path).name
+    if os.path.isabs(rel) or rel == ".." or rel.startswith(".." + os.sep) or rel.startswith("../"):
+        return Path(path).name  # outside the project: keep only the name, never parent folder names
     return Path(rel).as_posix()
 
 
@@ -173,6 +173,24 @@ def parse_rate(text: str | None) -> float | None:
         return None
 
 
+_TAG_DURATION_RE = re.compile(r"(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)")
+
+
+def _stream_duration(stream: dict) -> float | None:
+    """A stream's length: its `duration`, else the Matroska/WebM `DURATION` tag ('HH:MM:SS.fffffffff')."""
+    try:
+        if stream.get("duration"):
+            return float(stream["duration"])
+    except ValueError:
+        pass
+    for key, value in (stream.get("tags") or {}).items():
+        if key.upper().startswith("DURATION"):
+            m = _TAG_DURATION_RE.fullmatch(str(value).strip())
+            if m:
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return None
+
+
 def parse_ffprobe(text: str) -> dict:
     """`ffprobe -of json -show_format -show_streams` output -> stream facts."""
     data = json.loads(text)
@@ -188,10 +206,10 @@ def parse_ffprobe(text: str) -> dict:
             info["width"], info["height"] = stream.get("width"), stream.get("height")
             fps = parse_rate(stream.get("avg_frame_rate")) or parse_rate(stream.get("r_frame_rate"))
             info["fps"] = round(fps, 3) if fps else None
-            info["video_duration"] = float(stream["duration"]) if stream.get("duration") else duration
+            info["video_duration"] = _stream_duration(stream) or duration
         elif kind == "audio" and not info["has_audio"]:
             info["has_audio"] = True
-            info["audio_duration"] = float(stream["duration"]) if stream.get("duration") else duration
+            info["audio_duration"] = _stream_duration(stream) or duration
     return info
 
 
@@ -269,13 +287,21 @@ def parse_loudness(stderr: str) -> dict | None:
     return None
 
 
-_SRT_TIME_RE = re.compile(
-    r"(\d+):(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(\d+):(\d{1,2}):(\d{1,2})[,.](\d{1,3})")
+_SRT_STAMP = r"(?:(\d+):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})"   # hours are optional in WebVTT (00:01.000)
+_SRT_TIME_RE = re.compile(_SRT_STAMP + r"\s*-->\s*" + _SRT_STAMP)
 _TAG_RE = re.compile(r"<[^>]*>|\{\\[^}]*\}")
 
 
-def _srt_seconds(h: str, m: str, s: str, ms: str) -> float:
-    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")) / 1000.0
+def _srt_seconds(h: str | None, m: str, s: str, ms: str) -> float:
+    return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")) / 1000.0
+
+
+def read_subtitles(path: Path) -> str:
+    """Subtitle file -> text: UTF-8 (with or without BOM) or UTF-16 with a BOM."""
+    data = path.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
 
 
 def parse_srt(text: str) -> list[dict]:
@@ -415,7 +441,7 @@ def _check_freeze(m: dict, hook_seconds: float) -> list[dict]:
 
 def _check_subtitles(m: dict, cues: list[dict]) -> list[dict]:
     if not cues:
-        return [check("subtitle_end", WARN, "the subtitle file has no cues")]
+        return [check("subtitle_end", FAIL, "no readable cues in the subtitle file (check its format and encoding)")]
     duration = m.get("duration") or 0.0
     out = []
     late = [c for c in cues if c["end"] > duration + SUB_END_TOLERANCE_S]
@@ -603,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
         cues = None
         if srt is not None:
             try:
-                cues = parse_srt(srt.read_text(encoding="utf-8-sig", errors="replace"))
+                cues = parse_srt(read_subtitles(srt))
             except OSError as exc:
                 raise UsageError(f"cannot read subtitle file: {exc}") from exc
         measured, decode_error = measure(video, fast=args.fast)

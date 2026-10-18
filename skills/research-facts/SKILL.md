@@ -50,9 +50,10 @@ After the script is written:
 python $SKILL/scripts/facts_check.py facts.json --script script.md
 ```
 
-Every number in the script must match a fact. A rounded number is fine only after a hedge word ("about",
-"more than", "up to") and only in the direction that keeps it true. A `do_not_use` claim in the script fails the
-gate. Exit 1 means fix the script, not the fact file.
+Every number in the script must match a fact. A number may be rounded to the precision it is written with
+(12.52 billion as "12.5 billion"); anything looser needs a hedge word ("about", "more than", "up to") in the
+direction that keeps it true. Dates and times are reported, not checked. A `do_not_use` claim in the script fails
+the gate. Exit 1 means fix the script, not the fact file.
 
 ## How numbers are said
 

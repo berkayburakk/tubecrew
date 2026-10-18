@@ -11,7 +11,9 @@ How it works:
   2. Per channel: n and median views. Channels with fewer than 4 videos are skipped.
   3. multiple = views / channel median; keep videos at or above --min-multiple.
   4. --dates K fetches full metadata (`yt-dlp -J <video url>`) for the top K outliers only, for exact dates.
-     Under 7 days old is "too new" (views not settled); over 365 days is "old" (weak evidence).
+     Under 7 days old is "too new" (views not settled); over 365 days is "old" (weak evidence). An approximate
+     age is a lower bound ("1 year ago" means 12-23 months), so an approximate 365 days already counts as old.
+  View counts come from the channel page, rounded the way YouTube shows them ("63M views" -> 63,000,000).
 
 Run:
   python outliers.py @channelA https://www.youtube.com/@channelB --last 60 --min-multiple 2 --dates 10
@@ -75,7 +77,7 @@ def normalize_channel_url(text: str) -> str:
     if not s:
         raise UsageError("empty channel argument")
     if s.startswith("@"):
-        return f"https://www.youtube.com/{s}/videos"
+        s = "https://www.youtube.com/" + s  # "@handle/shorts" must still land on the videos tab
     if re.fullmatch(r"UC[\w-]{22}", s):
         return f"https://www.youtube.com/channel/{s}/videos"
     if not re.match(r"https?://", s, re.I):
@@ -166,13 +168,16 @@ def age_days(upload_date: str | None, today: dt.date) -> int | None:
     return (today - dt.date.fromisoformat(iso)).days
 
 
-def age_label(days: int | None) -> str:
-    """'too new' under 7 days (views not settled), 'old' over 365 days (weak evidence), 'no date', or ''."""
+def age_label(days: int | None, approx: bool = False) -> str:
+    """'too new' under 7 days (views not settled), 'old' over 365 days (weak evidence), 'no date', or ''.
+
+    An approximate age is a lower bound ("1 year ago" is 365-729 days), so approximate 365 already counts as old.
+    """
     if days is None:
         return "no date"
     if days < TOO_NEW_DAYS:
         return "too new"
-    if days > OLD_DAYS:
+    if days > OLD_DAYS or (approx and days >= OLD_DAYS):
         return "old"
     return ""
 
@@ -210,12 +215,13 @@ def find_outliers(catalog: dict, min_multiple: float = 2.0, today: dt.date | Non
             if multiple < min_multiple:
                 continue
             days = age_days(v.get("upload_date"), today)
+            approx = bool(v.get("date_approx"))
             outliers.append({
                 "channel": channel, "id": v["id"], "title": v.get("title", ""), "url": video_url(v["id"]),
                 "views": v["views"], "duration": v.get("duration"), "multiple": round(multiple, 2),
                 "channel_median": st["median"], "channel_n": st["n"],
-                "upload_date": _iso_date(v.get("upload_date")), "date_approx": bool(v.get("date_approx")),
-                "age_days": days, "age_label": age_label(days),
+                "upload_date": _iso_date(v.get("upload_date")), "date_approx": approx,
+                "age_days": days, "age_label": age_label(days, approx),
             })
             summary["outliers"] += 1
             if summary["top_multiple"] is None or multiple > summary["top_multiple"]:
@@ -228,15 +234,15 @@ def find_outliers(catalog: dict, min_multiple: float = 2.0, today: dt.date | Non
 def refresh_ages(outliers: list[dict], today: dt.date) -> None:
     for o in outliers:
         o["age_days"] = age_days(o.get("upload_date"), today)
-        o["age_label"] = age_label(o["age_days"])
+        o["age_label"] = age_label(o["age_days"], bool(o.get("date_approx")))
 
 
 def load_catalog(path: Path) -> dict:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))  # -sig: Windows editors may add a BOM
     except FileNotFoundError:
         raise UsageError(f"catalog not found: {path}") from None
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UsageError(f"cannot read catalog {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise UsageError(f"catalog {path} must be an object: channel -> list of videos")
@@ -246,6 +252,12 @@ def load_catalog(path: Path) -> dict:
             continue
         if not isinstance(videos, list):
             raise UsageError(f"catalog {path}: {channel!r} must map to a list of videos")
+        for v in videos:
+            views = v.get("views") if isinstance(v, dict) else None
+            if isinstance(v, dict) and (not v.get("id") or isinstance(views, bool)
+                                        or not (views is None or isinstance(views, (int, float)))):
+                raise UsageError(f"catalog {path}: {channel!r} has a video without an id or with non-numeric "
+                                 f"views: {json.dumps(v, ensure_ascii=False)[:120]}")
         out[channel] = videos
     return out
 
@@ -365,6 +377,7 @@ def main(argv=None) -> int:
         catalog: dict = {}
         if args.from_json:
             catalog.update(load_catalog(Path(args.from_json)))
+        from_file = set(catalog)  # a fresh pull of a saved channel replaces it instead of adding "Name (2)"
         errors: list[dict] = []
         base_cmd = None
         if args.channels:
@@ -378,8 +391,9 @@ def main(argv=None) -> int:
                     errors.append({"channel": url, "error": str(exc)})
                     continue
                 key, i = name, 2
-                while key in catalog:
+                while key in catalog and key not in from_file:
                     key, i = f"{name} ({i})", i + 1
+                from_file.discard(key)
                 catalog[key] = videos
             if not catalog:
                 raise UsageError("no channel could be loaded: " + "; ".join(e["error"] for e in errors))

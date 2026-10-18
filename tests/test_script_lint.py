@@ -64,6 +64,28 @@ def test_sentence_split_keeps_abbreviations_and_decimals():
     assert sents == ["Mr. Smith paid $12.5 million in the U.S. market.", "Then he left!"]
 
 
+def test_no_and_month_abbreviations_only_before_a_number():
+    def split(t):
+        return [s for _, s in sl.split_sentences(t)]
+    assert split("Did it work? No. It failed.") == ["Did it work?", "No.", "It failed."]
+    assert split("The answer is no. The bank said so.") == ["The answer is no.", "The bank said so."]
+    assert split("He was No. 1 in sales. Then he quit.") == ["He was No. 1 in sales.", "Then he quit."]
+    assert split("On Oct. 18 they met. On Sept. 2 they split.") == ["On Oct. 18 they met.", "On Sept. 2 they split."]
+    assert split("I met Jan. She left.") == ["I met Jan.", "She left."]
+
+
+def test_phrase_with_curly_apostrophe_is_found():
+    r = sl.lint("P01 What's a credit score? It is a number.", phrase="what’s a credit score")
+    assert r["phrase"]["found"] and r["phrase"]["within_limit"]
+
+
+def test_bom_does_not_hide_front_matter(tmp_path, capsys):
+    path = tmp_path / "script.md"
+    path.write_bytes(b"\xef\xbb\xbf---\ntitle: Leverage landscape notes\n---\n# Heading\n\nP01 Acme sells widgets.\n")
+    assert sl.main([str(path), "--gate", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["words"] == 3
+
+
 def test_long_sentences_reported_and_gated(tmp_path):
     long = "Word " + " ".join(["word"] * 30) + "."
     text = f"P01 Short start here. {long}\n\nP02 " + " ".join(["fine"] * 30) + "."

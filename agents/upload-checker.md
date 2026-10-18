@@ -35,17 +35,20 @@ The project folder (with `upload.json` and `render/`) and the target video id if
 Write your verdict with Bash to `<project>/qa/UPLOAD-GATE-<YYYY-MM-DD>.md`. The first lines are exactly:
 
 ```
-VERDICT: GO            (or VERDICT: NO-GO)
+VERDICT: GO
 Video: render/<name>.mp4 sha256:<first 12 hex>
 Metadata: upload.json sha256:<first 12 hex>
+Thumbnail: <thumbnail path> sha256:<first 12 hex>
 ```
 
-Take each hash from the file itself (`sha256sum <file> | cut -c1-12`, or the hashes the dry run prints), never
-from a note. Then the table:
+Write `VERDICT: NO-GO` instead when any check fails, and leave out the `Thumbnail:` line when `upload.json` sets
+no thumbnail. Take each hash from the file itself (`sha256sum <file> | cut -c1-12`, or the "Lines for the
+reviewers" the dry run prints), never from a note. Then the table:
 
 | check | result | evidence |
 
-Write the file last, after `upload.json` and the thumbnail are final. A re-check is a new file (`-2`); never edit
+Write the file last, after `upload.json` and the thumbnail are final; changing either afterwards invalidates
+the verdict. A re-check is a new file (`-2`); never edit
 an old one. This file is the only thing you write.
 
 `Left for the creator (Studio):` end screen, cards, audio tracks, pinned comment, publish or schedule.

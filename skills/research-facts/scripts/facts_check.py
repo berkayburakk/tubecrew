@@ -11,8 +11,9 @@ facts.json is an object `key -> fact`:
 Keys starting with "_" are ignored. An optional top-level "do_not_use": [{"claim": "...", "why": "..."}] lists
 things that must not be said.
 
-Pack checks (FAIL unless noted): numeric value; known type; source; http(s) url (not required for
-own-calculation); `accessed` an ISO date, not in the future; own-calculation has `calc`, every name in it is an
+Pack checks (FAIL unless noted): numeric value; known type; source and http(s) url (own-calculation needs
+neither); `accessed` an ISO date, not in the future (optional for own-calculation); own-calculation has `calc`,
+every name in it is an
 existing key, and when `calc` is plain arithmetic (numbers, keys, + - * / and parentheses) it recomputes to
 `value` within 1 %. `news` and `estimate` facts get an INFO reminder about how to say them.
 
@@ -25,8 +26,10 @@ fact's unit text for scale, currency and percent:
   - more than / over / above (at least): the fact is above (or equal to) the number;
   - up to / under / below / less than / fewer than (at most): the fact is at or below the number.
   A bound more than 2x away from the fact is not sourced by it ("more than 3" does not cite 3 billion).
-Years 1900-2100 and decades ("1990s") without another marker are INFO (dates, not checked). `--ignore 10,2026`
-skips listed numbers. An unmatched number is UNSOURCED (FAIL); a do_not_use claim found in the script is a FAIL.
+Years 1900-2100 and decades ("1990s") without another marker, ISO dates (2026-10-18), month-day dates
+("Oct. 18", "18 October") and clock times (3:45) are INFO (dates, not checked). Filing and model names such as
+10-K are skipped. `--ignore 10,2026` skips numbers whose full value is listed ("10" and "10%", not "$10 billion").
+An unmatched number is UNSOURCED (FAIL); a do_not_use claim found in the script is a FAIL.
 
 Run:
   python facts_check.py facts.json
@@ -85,6 +88,13 @@ HEDGE_KIND = {"approximately": "approx", "roughly": "approx", "around": "approx"
               "more than": "above", "over": "above", "above": "above", "at least": "at_least",
               "up to": "below", "under": "below", "below": "below", "less than": "below", "fewer than": "below",
               "at most": "below", "no more than": "below", "not more than": "below"}
+MONTH = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?"
+         r"|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)")
+DATE_RE = re.compile(  # case-sensitive: month names are capitalized, and "may" is a verb
+    r"(?<![\w.,])\d{4}-\d{2}-\d{2}(?![\w%])"
+    r"|(?<![\w.,:])\d{1,2}:\d{2}(?::\d{2})?(?:\s?[aApP]\.?[mM]\b\.?|(?![\w%]))"
+    r"|\b" + MONTH + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?\b"
+    r"|(?<![\w.,])\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + MONTH + r"\b")
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][\w.\-]*)\}")
 PARA_ID_RE = re.compile(r"^\s*(?:\*\*|__)?P\d+(?:\*\*|__)?[.:)]?\s+")
 
@@ -356,7 +366,12 @@ def spoken_lines(text: str) -> list[tuple[int, str, list[str]]]:
 def extract_numbers(line: str) -> list[dict]:
     """Every digit-based number in one cleaned line, with scale, kind, currency and the hedge before it."""
     found = []
+    date_spans = [d.span() for d in DATE_RE.finditer(line)]
+    dated = set()
     for m in NUM_RE.finditer(line):
+        span = next((sp for sp in date_spans if sp[0] <= m.start() < sp[1]), None)
+        if span in dated:
+            continue  # the rest of a date or time already recorded ("45" in "3:45")
         num_txt = m.group("num")
         suffix = (m.group("suffix") or m.group("word") or "").lower()
         percent = bool(m.group("pct") or m.group("pctword"))
@@ -369,8 +384,8 @@ def extract_numbers(line: str) -> list[dict]:
                 decade = True
             elif re.match(r"x\b", rest, re.I):
                 multiplier = True
-            elif re.match(r"[^\W_]", rest):
-                continue  # part of a name such as 3D, 5G, A4
+            elif re.match(r"[^\W_]", rest) or re.match(r"[-‑][A-Z]s?\b", rest):
+                continue  # part of a name such as 3D, 5G, A4, 10-K
         cur = m.group("cur")
         prefix = line[:m.start()]
         if not cur and prefix.endswith(("$", "€", "£", "¥")):
@@ -389,8 +404,11 @@ def extract_numbers(line: str) -> list[dict]:
         decimals = len(clean.split(".")[1]) if "." in clean else 0
         hm = HEDGE_RE.search(prefix)
         tail = re.match(r"(?:st|nd|rd|th|'?s|x)\b", rest, re.I).group(0) if (ordinal or decade or multiplier) else ""
+        if span:
+            dated.add(span)
         found.append({
-            "text": m.group(0).strip() + tail, "start": m.start(), "end": m.end(),
+            "text": line[span[0]:span[1]] if span else m.group(0).strip() + tail, "start": m.start(),
+            "end": span[1] if span else m.end(), "date": bool(span),
             "sign": -1 if m.group("sign") in ("-", "−") else 1,
             "currency": cur, "mantissa": mantissa, "decimals": decimals,
             "scale": Decimal(10) ** SCALE_WORDS.get(suffix, 0),
@@ -418,7 +436,7 @@ def extract_numbers(line: str) -> list[dict]:
 
 
 def _is_year_like(n: dict) -> bool:
-    if n["decade"]:
+    if n["decade"] or n.get("date"):
         return True
     plain = (n["kind"] == "plain" and not n["currency"] and not n["has_scale"] and not n["has_comma"]
              and n["decimals"] == 0 and n["sign"] == 1 and not n["ordinal"] and not n["multiplier"])
@@ -488,17 +506,18 @@ def check_script(text: str, facts: dict, do_not_use: list, ignore: list[Decimal]
             shown = (f"{n['hedge']} " if n["hedge"] else "") + n["text"]
             row = {"line": lineno, "text": shown, "value": float(n["value"]) * n["sign"], "kind": n["kind"],
                    "currency": n["currency"], "hedge": n["hedge"], "status": None, "key": None}
-            if any(n["mantissa"] == v or abs(n["value"]) == v for v in ignore):
+            if any(abs(n["value"]) == v for v in ignore):  # the full value: "--ignore 10" keeps "$10 billion"
                 row["status"] = "ignored"
                 numbers.append(row)
                 continue
-            fact, closest = match_number(n, table)
+            fact, closest = (None, None) if n["date"] else match_number(n, table)
             if fact:
                 row["status"], row["key"] = "sourced", fact["key"]
             elif _is_year_like(n):
                 row["status"] = "date"
-                findings.append(_finding("INFO", "year", f"\"{n['text']}\" looks like a year; dates are not checked",
-                                         line=lineno, text=n["text"]))
+                what = ("date", "a date or time") if n["date"] else ("year", "a year")
+                findings.append(_finding("INFO", what[0], f"\"{n['text']}\" looks like {what[1]}; dates are not "
+                                         "checked", line=lineno, text=n["text"]))
             else:
                 row["status"] = "unsourced"
                 msg = f"\"{shown}\": no fact matches"
@@ -546,10 +565,10 @@ def parse_ignore(text: str | None) -> list[Decimal]:
 
 def run(facts_path: Path, script_path: Path | None, ignore: list[Decimal], today: dt.date | None = None) -> dict:
     try:
-        raw = facts_path.read_text(encoding="utf-8")
+        raw = facts_path.read_text(encoding="utf-8-sig")  # -sig: Windows editors may add a BOM
     except FileNotFoundError:
         raise UsageError(f"facts file not found: {facts_path}") from None
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise UsageError(f"cannot read {facts_path}: {exc}") from exc
     try:
         data = json.loads(raw)
@@ -563,10 +582,10 @@ def run(facts_path: Path, script_path: Path | None, ignore: list[Decimal], today
               "pack_findings": pack_findings}
     if script_path is not None:
         try:
-            text = script_path.read_text(encoding="utf-8")
+            text = script_path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             raise UsageError(f"script not found: {script_path}") from None
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise UsageError(f"cannot read {script_path}: {exc}") from exc
         all_keys = {k for k in data if not str(k).startswith("_")} if isinstance(data, dict) else set()
         numbers, script_findings = check_script(text, facts, dnu, ignore, all_keys)

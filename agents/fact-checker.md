@@ -2,7 +2,7 @@
 name: fact-checker
 description: Independent auditor for numbers and factual or technical claims in anything that ships - a script before voiceover, a thumbnail or hook, a description, a post. Checks each claim against primary sources and returns a verdict table. Read-only. Never the agent that wrote the text. Use proactively before voiceover and before publishing; not for drafts.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
-model: opus
+model: inherit
 color: cyan
 ---
 

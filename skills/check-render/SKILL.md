@@ -26,7 +26,7 @@ It measures in one pass and writes `qa/render-check.json`, bound to the video's 
 | Loudness | integrated loudness outside -20..-9 LUFS (warns outside -16..-12; YouTube plays at about -14) |
 | Black frames | a black stretch of 1 s or more before the final second |
 | Frozen hook | the picture stands still for 3+ s inside the first 45 s |
-| Subtitles | a cue runs past the end of the video |
+| Subtitles | a cue ends more than 0.5 s after the video, or the file has no readable cues |
 
 Warnings (body freezes, short gaps, long subtitle lines) are listed but do not block. Use `--fast` while
 iterating; run the full pass once on the final file. Exit 1 means fix the render.

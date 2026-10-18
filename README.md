@@ -9,7 +9,7 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/berkayburakk/tubecrew/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/berkayburakk/tubecrew/actions/workflows/test.yml)
 [![release](https://img.shields.io/github/v/release/berkayburakk/tubecrew?style=flat-square&color=294f82)](https://github.com/berkayburakk/tubecrew/releases)
 [![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757?style=flat-square)](#install)
-[![Codex skills](https://img.shields.io/badge/Codex-skills-10a37f?style=flat-square)](#codex)
+[![Codex plugin](https://img.shields.io/badge/Codex-plugin-10a37f?style=flat-square)](#codex)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
@@ -45,18 +45,25 @@ limits. Reviews go to agents that did not make the thing they review.
 /plugin install tubecrew@tubecrew
 ```
 
-Skills appear as `tubecrew:<skill>` and agents as `tubecrew:<agent>`. Update with `/plugin update tubecrew`.
+Skills appear as `tubecrew:<skill>` and agents as `tubecrew:<agent>`. To update later, run
+`claude plugin update tubecrew@tubecrew` and restart Claude Code.
 
 <a id="codex"></a>
 **Codex**
 
 ```bash
-git clone https://github.com/berkayburakk/tubecrew.git
-cp -r tubecrew/skills/* ~/.codex/skills/          # or your repository's .agents/skills/
-cp tubecrew/codex/agents/*.toml ~/.codex/agents/
+codex plugin marketplace add berkayburakk/tubecrew
 ```
 
-A Codex plugin manifest (`.codex-plugin/plugin.json`) is included for plugin-aware Codex builds.
+Then open `/plugins` in Codex, install tubecrew and start a new session. The review agents are not part of the
+plugin bundle; copy them once:
+
+```bash
+git clone https://github.com/berkayburakk/tubecrew.git
+mkdir -p ~/.codex/agents && cp tubecrew/codex/agents/*.toml ~/.codex/agents/
+```
+
+Without plugins, copy the skills instead: `cp -r tubecrew/skills/* ~/.agents/skills/`.
 
 **Other agents**
 
@@ -67,7 +74,7 @@ Each skill is a folder with a `SKILL.md` and its scripts. Copy the folders into 
 | For | You need |
 |---|---|
 | All scripts | Python 3.9+ (`python` on Windows, `python3` on macOS and Linux) |
-| Voiceover and render checks | `ffmpeg` and `ffprobe` on `PATH` |
+| Render check | `ffmpeg` and `ffprobe` on `PATH` |
 | Topic research | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) |
 | Upload and retention | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
 | Transcribing audio | `pip install faster-whisper` (optional; any SRT, VTT or Whisper JSON transcript also works) |
@@ -173,7 +180,8 @@ The full contract (verdict lines, hashes and where credentials live) is in [CONT
 ## What tubecrew will never do
 
 - Make a video public, schedule it, or delete anything.
-- Upload unless the render check, the render review and the upload review all approve the exact same file.
+- Upload a file that has not passed the render check. The render review and the upload review must approve the
+  same file too; skipping them takes an explicit `--skip-review "<reason>"`, and the reason is logged.
 - Store tokens or keys in your project, or use any credentials other than your own.
 - Watch, like or comment on your own videos. Automated engagement violates YouTube's policies and can put the
   monetization account behind all of your channels at risk.

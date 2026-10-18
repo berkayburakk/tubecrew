@@ -2,7 +2,7 @@
 name: render-auditor
 description: Independent QA of a final rendered video before it is called ready to upload or share. Reuses the render_check.py measurements and spends its time on frames - broken visuals, clipped text, overlays covering numbers, pictures that contradict the narration, the opening and the end screen. Returns PASS or FAIL with timestamps. Read-only. Never the agent that built the video. Not for drafts or test renders.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: inherit
 color: cyan
 ---
 

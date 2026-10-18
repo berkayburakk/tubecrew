@@ -314,6 +314,16 @@ def fmt_time(seconds: float) -> str:
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
 
 
+def analytics_start(published_at) -> Optional[str]:
+    """startDate for a video published at `published_at` (UTC, `2026-10-01T03:00:00Z`): one day before its UTC date,
+    because Analytics dates are Pacific time and an early-UTC publish falls on the previous Pacific day."""
+    try:
+        day = dt.date.fromisoformat(str(published_at or "")[:10])
+    except ValueError:
+        return None
+    return (day - dt.timedelta(days=1)).isoformat()
+
+
 def totals_from_report(report: dict) -> dict:
     names = [h.get("name") for h in (report or {}).get("columnHeaders") or []]
     rows = (report or {}).get("rows") or []
@@ -612,7 +622,7 @@ def main(argv: Optional[list] = None) -> int:
             if video is None:
                 return usage(f"video {a.video_id} not found, or not visible to this account")
             today = dt.date.today().isoformat()
-            start = min((video.get("snippet") or {}).get("publishedAt", today)[:10], today)
+            start = min(analytics_start((video.get("snippet") or {}).get("publishedAt")) or today, today)
             curve = fetch_curve(session, cred.token, a.video_id, start, today)
             if not (curve or {}).get("rows"):
                 if a.json:

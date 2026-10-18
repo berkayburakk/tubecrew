@@ -56,9 +56,12 @@ def write_reviews(project: Path, video_sha: str = None, meta_sha: str = None, au
     (qa / f"RENDER-AUDIT-{DATE}.md").write_text(
         f"VERDICT: {audit}\nVideo: render/final.mp4 sha256:{video_sha[:12]}\n\n| severity | time |\n",
         encoding="utf-8")
+    thumb = json.loads((project / "upload.json").read_text(encoding="utf-8")).get("thumbnail")
+    thumb_line = f"Thumbnail: {thumb} sha256:{sha(project / thumb)[:12]}\n" if thumb else ""
     (qa / f"UPLOAD-GATE-{DATE}.md").write_text(
         f"VERDICT: {gate}\nVideo: render/final.mp4 sha256:{video_sha[:12]}\n"
-        f"Metadata: upload.json sha256:{meta_sha[:12]}\n\n| check | result | evidence |\n", encoding="utf-8")
+        f"Metadata: upload.json sha256:{meta_sha[:12]}\n{thumb_line}\n| check | result | evidence |\n",
+        encoding="utf-8")
 
 
 def make_project(tmp_path: Path, reviews: bool = True, thumbnail: bool = False, **overrides) -> Path:
@@ -248,6 +251,25 @@ def test_newest_verdict_by_date_then_suffix(tmp_path):
     assert up.verdict_key("UPLOAD-GATE-2026-10-18-3.md") == ("UPLOAD-GATE", "2026-10-18", 3)
 
 
+def test_explicit_dash_one_is_newer_than_no_suffix(tmp_path):
+    video_sha = "ab" * 32
+    (tmp_path / f"RENDER-AUDIT-{DATE}.md").write_text(
+        f"VERDICT: PASS\nVideo: render/final.mp4 sha256:{video_sha[:12]}\n", encoding="utf-8")
+    (tmp_path / f"RENDER-AUDIT-{DATE}-1.md").write_text(
+        f"VERDICT: FAIL\nVideo: render/final.mp4 sha256:{video_sha[:12]}\n", encoding="utf-8")
+    assert up.newest_verdict(tmp_path, "RENDER-AUDIT").name == f"RENDER-AUDIT-{DATE}-1.md"
+    assert not up.check_review(tmp_path, "RENDER-AUDIT", video_sha)[0]
+
+
+def test_verdict_file_encodings_and_crlf(tmp_path):
+    video_sha = "cd" * 32
+    text = f"VERDICT: PASS\r\nVideo: render/final.mp4 sha256:{video_sha[:12]}\r\n"
+    for encoding in ("utf-8", "utf-8-sig", "utf-16"):  # utf-16: Windows PowerShell 5.1's `>` default
+        (tmp_path / f"RENDER-AUDIT-{DATE}.md").write_bytes(text.encode(encoding))
+        ok, detail = up.check_review(tmp_path, "RENDER-AUDIT", video_sha)
+        assert ok, (encoding, detail)
+
+
 def test_sha_mismatch_fails(tmp_path):
     project = make_project(tmp_path)
     qa, video_sha = project / "qa", sha(project / "render" / "final.mp4")
@@ -337,6 +359,20 @@ def test_skip_review_reason_length(tmp_path, capsys, home):
     assert out.count("skipped by --skip-review") == 2
 
 
+def test_skip_review_never_overrides_a_rejection_of_this_file(tmp_path, capsys, home):
+    project = make_project(tmp_path, reviews=False)
+    write_reviews(project, gate="NO-GO")  # the upload-checker rejected these exact bytes
+    reason = "reviewer unavailable, test channel"
+    assert up.main([str(project), "--skip-review", reason]) == 1
+    out = capsys.readouterr().out
+    assert "does not override a rejection" in out and "skipped by --skip-review" not in out
+    # After upload.json changes, the NO-GO is outdated: skipping the new review is allowed again.
+    meta = json.loads((project / "upload.json").read_text(encoding="utf-8"))
+    meta["title"] = "A fixed title after the NO-GO"
+    (project / "upload.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert up.main([str(project), "--skip-review", reason]) == 0
+
+
 def test_skip_review_does_not_skip_render_check(tmp_path, capsys, home):
     project = make_project(tmp_path, reviews=False)
     assert up.main([str(project), "--skip-review", "reviewer unavailable, test channel"]) == 1
@@ -355,10 +391,14 @@ def test_duration_from_real_video_drives_the_chapter_end_check(tmp_path):
 
 def test_thumbnail_checks(tmp_path):
     project = make_project(tmp_path)
-    (project / "big.png").write_bytes(b"0" * (2 * 1024 * 1024 + 1))
+    with (project / "big.png").open("wb") as f:
+        f.truncate(50 * 1024 * 1024 + 1)  # thumbnails.set takes up to 52428800 bytes
+    (project / "4k.png").write_bytes(b"0" * (2 * 1024 * 1024 + 1))  # over the old 2 MB, a valid 4K thumbnail
     (project / "art.gif").write_bytes(b"GIF89a")
     assert up.check_thumbnail(project, None)[1].status == "PASS"
+    assert up.check_thumbnail(project, "4k.png")[1].status == "PASS"
     assert up.check_thumbnail(project, "big.png")[1].status == "FAIL"
+    assert "50 MB" in up.check_thumbnail(project, "big.png")[1].detail
     assert up.check_thumbnail(project, "art.gif")[1].status == "FAIL"
     assert up.check_thumbnail(project, "missing.jpg")[1].status == "FAIL"
     assert up.check_thumbnail(project, "../outside.jpg")[1].status == "FAIL"
@@ -496,3 +536,20 @@ def test_resumable_upload_refuses_non_private_body(tmp_path):
     video.write_bytes(b"x")
     with pytest.raises(RuntimeError):
         up.resumable_upload(FakeSession([]), "tok", video, {"status": {"privacyStatus": "public"}})
+
+
+def test_thumbnail_swapped_after_the_review_fails_the_upload_gate(tmp_path):
+    project = make_project(tmp_path, thumbnail=True)
+    assert up.build_plan(project).ok
+    (project / "thumb.jpg").write_bytes(b"\xff\xd8\xff a different fake jpeg")
+    gate = [c for c in up.build_plan(project).checks if c.gate == "upload gate"][0]
+    assert gate.status == "FAIL" and "thumbnail changed after the review" in gate.detail
+
+
+def test_upload_gate_without_a_thumbnail_line_fails_when_a_thumbnail_is_set(tmp_path):
+    project = make_project(tmp_path, thumbnail=True)
+    gate_file = project / "qa" / f"UPLOAD-GATE-{DATE}.md"
+    kept = [ln for ln in gate_file.read_text(encoding="utf-8").splitlines() if not ln.startswith("Thumbnail:")]
+    gate_file.write_text("\n".join(kept), encoding="utf-8")
+    gate = [c for c in up.build_plan(project).checks if c.gate == "upload gate"][0]
+    assert gate.status == "FAIL" and "Thumbnail:" in gate.detail

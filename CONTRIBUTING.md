@@ -41,10 +41,10 @@ Every skill and agent assumes one folder per video:
   render/<name>.mp4    the final render
   upload.json          title, description, tags, flags         (upload-private)
   qa/                  every gate result lives here
-    script-lint.json
-    voice-check.json
-    render-check.json                 render_check.py: verdict + sha256 of the video
-    RENDER-AUDIT-<YYYY-MM-DD>.md       render-auditor
+    SCRIPT-AB-<YYYY-MM-DD>.md          script-auditor (saved by the caller)
+    voice-check.json                   voice_check.py
+    render-check.json                  render_check.py: verdict + sha256 of the video
+    RENDER-AUDIT-<YYYY-MM-DD>.md       render-auditor (saved by the caller)
     UPLOAD-GATE-<YYYY-MM-DD>.md        upload-checker
     upload-log.json                    upload.py, after a real upload
 ```
@@ -62,6 +62,7 @@ Video: render/final.mp4 sha256:<first 12 hex chars>
 VERDICT: GO                         (upload-checker: GO | NO-GO)
 Video: render/final.mp4 sha256:<first 12 hex chars>
 Metadata: upload.json sha256:<first 12 hex chars>
+Thumbnail: thumbnail.jpg sha256:<first 12 hex chars>     (only when upload.json sets a thumbnail)
 ```
 
 The verdict line must be within the first 10 lines. A re-review writes a new file (`-2`, `-3`), it never edits an

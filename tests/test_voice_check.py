@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,13 @@ def test_vtt_parsing_drops_header_and_rolling_duplicates():
     assert pieces[0]["start"] == 1.0
 
 
+def test_vtt_entities_are_decoded():
+    # WebVTT escapes & < >; undecoded, "&gt;&gt;" and "AT&amp;T" showed up as stray words "gt" and "amp".
+    vtt = "WEBVTT\n\n00:01.000 --> 00:03.000\n&gt;&gt; AT&amp;T grew\n"
+    pieces = vc.parse_cues(vtt)
+    assert vc.heard_tokens(pieces)[0] == vc.normalize("AT&T grew") == ["at", "t", "grew"]
+
+
 def test_whisper_json_shapes():
     with_words = {"segments": [{"start": 0.0, "end": 2.0, "text": " Hello world",
                                 "words": [{"word": " Hello", "start": 0.1, "end": 0.5},
@@ -234,6 +242,38 @@ def test_cli_audio_without_faster_whisper_is_usage_error(tmp_path, capsys, monke
     assert "pip install faster-whisper" in capsys.readouterr().err
 
 
+def test_cli_audio_passes_base_language_code_to_whisper(tmp_path, capsys, monkeypatch):
+    # "--language en-US" works for normalizing but faster-whisper only accepts "en".
+    seen = {}
+
+    class FakeModel:
+        def __init__(self, name, device, compute_type):
+            pass
+
+        def transcribe(self, path, language=None, word_timestamps=False):
+            seen["language"] = language
+            segment = types.SimpleNamespace(start=0.0, end=1.0, text=" Hello world.", words=[])
+            return iter([segment]), types.SimpleNamespace(language=language)
+
+    fake = types.ModuleType("faster_whisper")
+    fake.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+    script = write(tmp_path / "script.md", "Hello world.\n")
+    audio = tmp_path / "voice" / "narration.wav"
+    audio.parent.mkdir()
+    audio.write_bytes(b"RIFF0000WAVE")
+    assert vc.main([str(script), str(audio), "--language", "en-US"]) == 0
+    assert seen["language"] == "en"
+    assert (tmp_path / "qa" / "voice-check-transcript.json").is_file()
+    assert "VERDICT: PASS" in capsys.readouterr().out
+
+
 def test_cli_missing_files(tmp_path, capsys):
     assert vc.main([str(tmp_path / "none.md"), str(tmp_path / "none.srt")]) == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_rel_path_outside_project_keeps_only_the_file_name(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    assert vc.rel_path(tmp_path / "other" / "take.srt", project) == "take.srt"

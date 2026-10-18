@@ -2,7 +2,7 @@
 name: script-auditor
 description: Independent A/B review of a spoken script after its humanizing rewrite, before the fact-checker and any voiceover. Compares the original (A) with the rewrite (B) paragraph by paragraph for meaning drift, lost hedges, AI-writing patterns and how it sounds aloud. Read-only. Never the agent that wrote either version.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: inherit
 color: cyan
 ---
 

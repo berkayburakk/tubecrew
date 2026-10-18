@@ -125,6 +125,36 @@ def test_parse_ffprobe_streams_and_rate():
     assert info["width"] == 1920
 
 
+def test_parse_ffprobe_reads_matroska_duration_tags():
+    # MKV/WebM carry per-stream length only in a DURATION tag; without it a short audio track looked complete.
+    text = json.dumps({
+        "format": {"duration": "10.000000"},
+        "streams": [
+            {"codec_type": "video", "width": 320, "height": 180, "avg_frame_rate": "25/1",
+             "tags": {"DURATION": "00:00:10.000000000"}},
+            {"codec_type": "audio", "tags": {"DURATION-eng": "00:00:07.008000000"}},
+        ],
+    })
+    info = rc.parse_ffprobe(text)
+    assert info["video_duration"] == pytest.approx(10.0)
+    assert info["audio_duration"] == pytest.approx(7.008)
+    assert statuses(rc.evaluate(measured(**info)), "audio_length") == ["FAIL"]
+
+
+def test_parse_srt_accepts_webvtt_timestamps_without_hours():
+    # Whisper writes WebVTT as mm:ss.ttt; these used to parse as zero cues, so the subtitle gate passed silently.
+    cues = rc.parse_srt("WEBVTT\n\n00:01.000 --> 00:04.000 line:0\nHello\n\n01:09.500 --> 01:15.000\nLater\n")
+    assert [(c["start"], c["end"]) for c in cues] == [(1.0, 4.0), (69.5, 75.0)]
+    assert cues[0]["lines"] == ["Hello"]
+
+
+def test_read_subtitles_decodes_utf16_with_bom(tmp_path):
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:03,000\nHello\n", encoding="utf-16")
+    cues = rc.parse_srt(rc.read_subtitles(srt))
+    assert len(cues) == 1 and cues[0]["lines"] == ["Hello"]
+
+
 def test_parse_srt_tolerates_bom_crlf_tags_and_missing_numbers():
     text = ("\ufeff1\r\n00:00:01,000 --> 00:00:02,500\r\n<i>Hello</i> there\r\n\r\n"
             "00:00:03.000 --> 00:00:04,000\r\nNo index\r\n")
@@ -342,6 +372,15 @@ def test_e2e_short_audio_fails(tmp_path, capsys):
 
 
 @needs_ffmpeg
+def test_e2e_short_audio_in_matroska_fails(tmp_path, capsys):
+    clip = make_clip(tmp_path / "short.mkv", seconds=10, audio_seconds=7)
+    code, _ = run_main(capsys, clip)
+    report = report_of(tmp_path / "qa" / "render-check.json")
+    assert statuses(report["checks"], "audio_length") == ["FAIL"]
+    assert code == 1
+
+
+@needs_ffmpeg
 def test_e2e_subtitle_past_end_fails_and_json_output(moving_clip, tmp_path, capsys):
     srt = tmp_path / "captions.srt"
     srt.write_text("1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:09,000 --> 00:00:15,000\nToo late\n",
@@ -358,3 +397,16 @@ def test_missing_video_is_usage_error(tmp_path, capsys):
     code = rc.main([str(tmp_path / "nope.mp4")])
     assert code == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_rel_path_outside_project_keeps_only_the_file_name(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "elsewhere" / "captions.srt"
+    assert rc.rel_path(outside, project) == "captions.srt"
+    assert rc.rel_path(project / "voice" / "captions.srt", project) == "voice/captions.srt"
+
+
+def test_subtitle_file_without_cues_fails():
+    checks = rc._check_subtitles({"duration": 60.0}, [])
+    assert [(c["name"], c["status"]) for c in checks] == [("subtitle_end", "FAIL")]

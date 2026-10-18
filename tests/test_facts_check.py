@@ -268,6 +268,38 @@ def test_years_are_info_and_ignore_list():
     assert _codes(findings) == ["unsourced"]
 
 
+def test_dates_and_times_are_info_not_unsourced():
+    script = ("On 2026-10-18 at 3:45 p.m. the CFO spoke. On Oct. 18 and on 18 October, at 11:30, "
+              "revenue was $12.5 billion.")
+    numbers, findings = _check(script)
+    status = [(n["text"], n["status"]) for n in numbers]
+    assert status == [("2026-10-18", "date"), ("3:45 p.m.", "date"), ("Oct. 18", "date"), ("18 October", "date"),
+                      ("11:30", "date"), ("$12.5 billion", "sourced")]
+    assert _codes(findings) == [] and set(_codes(findings, "INFO")) == {"date"}
+    assert _status("Up to 40 may leave.")[0][1] == "unsourced"  # "may" the verb is not a month
+
+
+def test_filing_names_are_not_numbers():
+    assert _status("The 10-K and two 10-Qs say revenue was $12.5 billion.") == [
+        ("$12.5 billion", "sourced", "revenue_2025")]
+
+
+def test_ignore_matches_the_full_value_only():
+    st = _status("A top 7 list. Revenue hit $7 billion, or 7%.", ignore=[Decimal(7)])
+    assert [(t, s) for t, s, _ in st] == [("7", "ignored"), ("$7 billion", "unsourced"), ("7%", "ignored")]
+
+
+def test_bom_files_read_and_non_utf8_script_is_a_usage_error(tmp_path, capsys):
+    facts = tmp_path / "facts.json"
+    facts.write_bytes(b"\xef\xbb\xbf" + json.dumps(FACTS).encode("utf-8"))  # Windows editors add a BOM
+    script = tmp_path / "script.md"
+    script.write_bytes(b"\xef\xbb\xbf---\ntitle: 99 ideas\n---\nP01 Revenue was $12.5 billion.\n")
+    assert fc.main([str(facts), "--script", str(script)]) == 0
+    script.write_bytes("P01 Revenue was €12.5 billion.".encode("cp1252"))
+    assert fc.main([str(facts), "--script", str(script)]) == 2
+    assert "cannot read" in capsys.readouterr().err
+
+
 def test_skipped_markdown_parts():
     script = "\n".join([
         "---", "title: 99", "---",

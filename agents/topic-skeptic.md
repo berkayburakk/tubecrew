@@ -2,7 +2,7 @@
 name: topic-skeptic
 description: Red-team reviewer for YouTube topic candidates, right after the evidence step of find-topic. Pass it the raw candidate table and evidence, not a summary. Tries to kill each candidate and returns ALIVE or DEAD with reasons. Does not pick the winner.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
-model: opus
+model: inherit
 color: cyan
 ---
 

@@ -41,6 +41,7 @@ import argparse
 import datetime as dt
 import difflib
 import hashlib
+import html
 import json
 import os
 import re
@@ -87,8 +88,8 @@ def rel_path(path: Path, base: Path) -> str:
         rel = os.path.relpath(str(Path(path).resolve()), str(Path(base).resolve()))
     except ValueError:
         return Path(path).name
-    if os.path.isabs(rel):
-        return Path(path).name
+    if os.path.isabs(rel) or rel == ".." or rel.startswith(".." + os.sep) or rel.startswith("../"):
+        return Path(path).name  # outside the project: keep only the name, never parent folder names
     return Path(rel).as_posix()
 
 
@@ -355,7 +356,7 @@ def parse_cues(text: str) -> list[dict]:
             g = m.groups()
             lines = []
             for raw in rows[i + 1:]:
-                line = _CUE_TAG_RE.sub("", raw).strip()
+                line = html.unescape(_CUE_TAG_RE.sub("", raw)).strip()   # WebVTT escapes &amp; &lt; &gt;
                 if line and not (rolling and line == previous):
                     lines.append(line)
                     previous = line
@@ -469,7 +470,7 @@ def transcribe(audio: Path, language: str | None, model_name: str) -> dict:
 
     def run(device: str, compute_type: str) -> dict:
         model = WhisperModel(model_name, device=device, compute_type=compute_type)
-        segments, info = model.transcribe(str(audio), language=language or None, word_timestamps=True)
+        segments, info = model.transcribe(str(audio), language=_lang(language) or None, word_timestamps=True)
         out = []
         for seg in segments:
             words = [{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}

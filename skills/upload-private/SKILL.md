@@ -51,12 +51,17 @@ python $SKILL/scripts/upload.py <video-project>
 ```
 
 It checks title length, description bytes, tag weight, chapter rules, the thumbnail, a duplicate upload, and that
-`qa/render-check.json`, `qa/RENDER-AUDIT-*.md` and `qa/UPLOAD-GATE-*.md` all approve **this exact file**.
+`qa/render-check.json`, `qa/RENDER-AUDIT-*.md` and `qa/UPLOAD-GATE-*.md` all approve **these exact files** (the
+video, `upload.json` and the thumbnail, by hash).
 
 ## 3. Independent go/no-go
 
 Give the `upload-checker` agent the project folder. It writes `qa/UPLOAD-GATE-<date>.md` (GO or NO-GO) bound to
-the video and `upload.json` hashes. Any later change to either means a new review.
+the video, `upload.json` and thumbnail hashes. Any later change to one of them means a new review.
+
+If the creator deliberately skips the two review agents, the upload needs `--skip-review "<reason>"` (at least 12
+characters); the reason is written to the upload log. It stands in for a missing or outdated review, never for a
+FAIL or NO-GO on the same files, and the render check cannot be skipped.
 
 ## 4. Upload
 

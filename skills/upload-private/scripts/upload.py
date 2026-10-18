@@ -46,7 +46,7 @@ TITLE_MAX = 100
 TITLE_MOBILE = 60
 DESCRIPTION_MAX_BYTES = 5000
 TAG_WEIGHT_MAX = 500
-THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
+THUMBNAIL_MAX_BYTES = 50 * 1024 * 1024  # thumbnails.set mediaUpload maxSize (52428800) in the API discovery document
 THUMBNAIL_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 CHAPTER_MIN = 3
 CHAPTER_GAP_S = 10
@@ -76,7 +76,7 @@ _PROFILE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _CHAPTER = re.compile(r"^\s*(?:[-*•]\s+)?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s+(\S.*)$")
 _VERDICT_NAME = re.compile(r"^(?P<kind>RENDER-AUDIT|UPLOAD-GATE)-(?P<date>\d{4}-\d{2}-\d{2})(?:-(?P<n>\d+))?\.md$")
 _VERDICT_LINE = re.compile(r"^[\s#>*_`]*VERDICT[\s*_`]*:(?P<rest>.*)$", re.I)
-_HASH_LINE = re.compile(r"^[\s#>*_`-]*(?P<label>Video|Metadata)[\s*_`]*:\s*(?P<path>.*?)\s*sha256\s*[:=]\s*`?"
+_HASH_LINE = re.compile(r"^[\s#>*_`-]*(?P<label>Video|Metadata|Thumbnail)[\s*_`]*:\s*(?P<path>.*?)\s*sha256\s*[:=]\s*`?"
                         r"(?P<sha>[0-9a-fA-F]{12,64})", re.I)
 
 
@@ -105,6 +105,7 @@ class Plan:
     video_sha: Optional[str] = None
     duration: Optional[float] = None
     thumbnail: Optional[Path] = None
+    thumb_sha: Optional[str] = None
     skip_reason: Optional[str] = None
     checks: list = field(default_factory=list)
 
@@ -267,20 +268,21 @@ def verdict_key(name: str) -> Optional[tuple]:
 
 
 def newest_verdict(qa_dir: Path, kind: str) -> Optional[Path]:
-    """Newest `<kind>-<date>[-N].md`: by the date in the name, then by the -N suffix."""
+    """Newest `<kind>-<date>[-N].md`: by the date in the name, then by the -N suffix (an explicit `-1` is newer than
+    the file without a suffix)."""
     if not qa_dir.is_dir():
         return None
     found = []
     for p in qa_dir.glob(f"{kind}-*.md"):
         key = verdict_key(p.name)
         if key and key[0] == kind and p.is_file():
-            found.append(((key[1], key[2], p.name), p))
+            found.append(((key[1], key[2], p.name != f"{kind}-{key[1]}.md", p.name), p))
     return max(found)[1] if found else None
 
 
 def parse_verdict(text: str) -> dict:
-    """Reads the fixed lines in the first 10 lines: the first VERDICT line, and the Video/Metadata hash lines."""
-    out = {"verdict": None, "video_path": None, "video_sha": None, "metadata_sha": None}
+    """Reads the fixed lines in the first 10 lines: the first VERDICT line and the Video/Metadata/Thumbnail hashes."""
+    out = {"verdict": None, "video_path": None, "video_sha": None, "metadata_sha": None, "thumbnail_sha": None}
     for line in text.splitlines()[:VERDICT_LINES]:
         if out["verdict"] is None:
             m = _VERDICT_LINE.match(line)
@@ -298,7 +300,11 @@ def parse_verdict(text: str) -> dict:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8-sig", errors="replace")
+    """UTF-8 with or without a BOM, or UTF-16 with a BOM (what Windows PowerShell 5.1's `>` writes)."""
+    data = path.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
 
 
 def check_render_json(qa_dir: Path, video_sha: str) -> tuple:
@@ -321,8 +327,10 @@ def check_render_json(qa_dir: Path, video_sha: str) -> tuple:
     return True, f"qa/{RENDER_CHECK} PASS for sha256:{video_sha[:12]}"
 
 
-def check_review(qa_dir: Path, kind: str, video_sha: str, meta_sha: Optional[str] = None) -> tuple:
-    """(ok, detail) for the newest RENDER-AUDIT (expects PASS) or UPLOAD-GATE (expects GO and the metadata hash)."""
+def check_review(qa_dir: Path, kind: str, video_sha: str, meta_sha: Optional[str] = None,
+                 thumb_sha: Optional[str] = None) -> tuple:
+    """(ok, detail) for the newest RENDER-AUDIT (expects PASS) or UPLOAD-GATE (expects GO, the metadata hash and,
+    when upload.json sets a thumbnail, the thumbnail hash)."""
     expected = "PASS" if kind == "RENDER-AUDIT" else "GO"
     agent = "render-auditor" if kind == "RENDER-AUDIT" else "upload-checker"
     path = newest_verdict(qa_dir, kind)
@@ -345,7 +353,25 @@ def check_review(qa_dir: Path, kind: str, video_sha: str, meta_sha: Optional[str
         if v["metadata_sha"] != (meta_sha or "")[:12]:
             return False, (f"{path.name} reviewed upload.json sha256:{v['metadata_sha']} but it is now "
                            f"sha256:{(meta_sha or '')[:12]}: upload.json changed after the review")
+        if thumb_sha and v["thumbnail_sha"] is None:
+            return False, (f"{path.name}: upload.json sets a thumbnail but the review has no "
+                           f"'Thumbnail: <path> sha256:<12 hex>' line in the first {VERDICT_LINES} lines")
+        if thumb_sha and v["thumbnail_sha"] != thumb_sha[:12]:
+            return False, (f"{path.name} reviewed thumbnail sha256:{v['thumbnail_sha']} but it is now "
+                           f"sha256:{thumb_sha[:12]}: the thumbnail changed after the review")
     return True, f"{path.name}: {expected} for sha256:{video_sha[:12]}"
+
+
+def rejects_this_file(qa_dir: Path, kind: str, video_sha: str, meta_sha: Optional[str] = None) -> bool:
+    """True when the newest review of this kind says FAIL or NO-GO for these exact bytes (and, for UPLOAD-GATE, this
+    upload.json). --skip-review stands in for a missing or outdated review, never for a rejection."""
+    path = newest_verdict(qa_dir, kind)
+    if path is None:
+        return False
+    v = parse_verdict(_read_text(path))
+    if v["verdict"] not in ("FAIL", "NO-GO") or v["video_sha"] != video_sha[:12]:
+        return False
+    return kind != "UPLOAD-GATE" or v["metadata_sha"] == (meta_sha or "")[:12]
 
 
 # --- files --------------------------------------------------------------------------------------------------------
@@ -415,8 +441,8 @@ def check_thumbnail(project: Path, value) -> tuple:
                                                 "(YouTube takes .jpg, .jpeg or .png)")
     size = path.stat().st_size
     if size > THUMBNAIL_MAX_BYTES:
-        return None, Check("thumbnail", "FAIL", f"thumbnail is {size / 1024 / 1024:.1f} MB (YouTube allows 2 MB; "
-                                                "save it as JPEG)")
+        return None, Check("thumbnail", "FAIL", f"thumbnail is {size / 1024 / 1024:.1f} MB (the YouTube API allows "
+                                                f"{THUMBNAIL_MAX_BYTES // 1024 // 1024} MB; save it as JPEG)")
     return path, Check("thumbnail", "PASS", f"{rel(path, project)}, {size // 1024} KB")
 
 
@@ -510,6 +536,8 @@ def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = 
             add(Check("chapters", "PASS", "no timestamp lines in the description (no chapters)"))
         plan.thumbnail, thumb_check = check_thumbnail(project, meta.get("thumbnail"))
         add(thumb_check)
+        if plan.thumbnail:
+            plan.thumb_sha = sha256_file(plan.thumbnail)
 
     qa = project / "qa"
     if plan.video_sha is None:
@@ -520,11 +548,13 @@ def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = 
     ok, detail = check_render_json(qa, plan.video_sha)
     add(Check("render check", "PASS" if ok else "FAIL", detail))
     for gate, kind in (("render audit", "RENDER-AUDIT"), ("upload gate", "UPLOAD-GATE")):
-        ok, detail = check_review(qa, kind, plan.video_sha, plan.meta_sha)
+        ok, detail = check_review(qa, kind, plan.video_sha, plan.meta_sha, plan.thumb_sha)
         if ok:
             add(Check(gate, "PASS", detail))
-        elif skip_reason:
+        elif skip_reason and not rejects_this_file(qa, kind, plan.video_sha, plan.meta_sha):
             add(Check(gate, "WARN", f"skipped by --skip-review ({skip_reason}); otherwise: {detail}"))
+        elif skip_reason:
+            add(Check(gate, "FAIL", f"{detail} (--skip-review does not override a rejection of these exact files)"))
         else:
             add(Check(gate, "FAIL", detail))
 
@@ -797,6 +827,8 @@ def print_plan(plan: Plan, say: Out) -> None:
         say(f"  Video: {rel(plan.video, plan.project)} sha256:{plan.video_sha[:12]}")
         if plan.meta_sha:
             say(f"  Metadata: {UPLOAD_JSON} sha256:{plan.meta_sha[:12]}")
+        if plan.thumbnail and plan.thumb_sha:
+            say(f"  Thumbnail: {rel(plan.thumbnail, plan.project)} sha256:{plan.thumb_sha[:12]}")
     say("")
 
 
@@ -806,6 +838,7 @@ def plan_json(plan: Plan) -> dict:
             "video": rel(plan.video, plan.project) if plan.video else None,
             "sha256": plan.video_sha,
             "metadata_sha256": plan.meta_sha,
+            "thumbnail_sha256": plan.thumb_sha,
             "duration_s": plan.duration,
             "ok": plan.ok,
             "checks": [{"gate": c.gate, "status": c.status, "detail": c.detail} for c in plan.checks]}

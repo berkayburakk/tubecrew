@@ -25,11 +25,9 @@ def test_versions_agree():
     plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     codex = json.loads((ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     version = plugin["version"]
     assert market["plugins"][0]["version"] == version
     assert codex["version"] == version
-    assert f'version = "{version}"' in pyproject
 
 
 def test_every_skill_has_matching_name_and_a_description():

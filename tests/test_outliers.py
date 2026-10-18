@@ -136,6 +136,48 @@ def test_age_labels():
     assert labels == {"new": "too new", "old": "old"}
 
 
+def test_approximate_age_is_a_lower_bound():
+    # yt-dlp turns "1 year ago" (12-23 months) into exactly one year; that is already old evidence
+    assert out.age_label(365, approx=True) == "old"
+    assert out.age_label(365) == "" and out.age_label(364, approx=True) == ""
+    year_ago = (TODAY - dt.timedelta(days=365)).isoformat()
+    catalog = {"C": [{"id": "y", "title": "", "views": 900, "upload_date": year_ago, "date_approx": True}]
+               + [{"id": f"x{i}", "title": "", "views": 100} for i in range(4)]}
+    outliers, _ = out.find_outliers(catalog, 2.0, TODAY)
+    assert outliers[0]["age_label"] == "old"
+
+
+def test_normalize_handle_with_tab():
+    assert out.normalize_channel_url("@acme/videos") == "https://www.youtube.com/@acme/videos"
+    assert out.normalize_channel_url("@acme/shorts") == "https://www.youtube.com/@acme/videos"
+
+
+def test_live_pull_replaces_the_same_channel_from_a_saved_catalog(tmp_path, monkeypatch, capsys):
+    saved = tmp_path / "catalog.json"
+    old = [{"id": f"old{i}", "title": "", "views": v} for i, v in enumerate([100, 100, 100, 100, 900])]
+    saved.write_text(json.dumps({"Acme Science": old, "Example Lab": old}), encoding="utf-8")
+    monkeypatch.setattr(out, "ytdlp_command", lambda: ["yt-dlp"])
+    monkeypatch.setattr(out, "_run_json", lambda cmd, timeout=600: FLAT)
+    rc = out.main(["--from-json", str(saved), "@acmescience", "--dates", "0", "--json", "--save", str(saved)])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert sorted(json.loads(saved.read_text(encoding="utf-8"))) == ["Acme Science", "Example Lab"]  # no "(2)"
+    acme = [o["id"] for o in data["outliers"] if o["channel"].startswith("Acme Science")]
+    assert acme == ["vid00000001"]  # the fresh pull, listed once
+
+
+def test_catalog_with_bom_loads_and_bad_views_are_a_usage_error(tmp_path, capsys):
+    good = tmp_path / "bom.json"
+    good.write_bytes(b"\xef\xbb\xbf" + json.dumps({"C": [{"id": "a", "views": 5}]}).encode("utf-8"))
+    assert out.main(["--from-json", str(good)]) == 0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"C": [{"id": "a", "views": "1,000"}]}), encoding="utf-8")
+    assert out.main(["--from-json", str(bad)]) == 2
+    bad.write_text(json.dumps({"C": [{"title": "no id", "views": 10}]}), encoding="utf-8")
+    assert out.main(["--from-json", str(bad)]) == 2
+    assert "without an id" in capsys.readouterr().err
+
+
 def test_normalize_channel_url():
     assert out.normalize_channel_url("@acme") == "https://www.youtube.com/@acme/videos"
     assert out.normalize_channel_url("https://www.youtube.com/@acme") == "https://www.youtube.com/@acme/videos"

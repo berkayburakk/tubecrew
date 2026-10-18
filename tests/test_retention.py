@@ -262,6 +262,19 @@ def test_missing_token_exits_2(monkeypatch, tmp_path, capsys):
     assert "--login --profile mychannel" in err or "pip install" in err
 
 
+def test_start_date_covers_the_pacific_publish_day(monkeypatch, capsys):
+    # Analytics dates are Pacific time: 03:00 UTC on Oct 1 is the evening of Sep 30 there.
+    assert rt.analytics_start("2026-10-01T03:00:00Z") == "2026-09-30"
+    assert rt.analytics_start(None) is None and rt.analytics_start("soon") is None
+    early = {**VIDEO, "snippet": {**VIDEO["snippet"], "publishedAt": "2026-10-01T03:00:00Z"}}
+    starts = []
+    _mock_api(monkeypatch, {"rows": []})
+    monkeypatch.setattr(rt, "fetch_video_info", lambda session, token, video_id: early)
+    monkeypatch.setattr(rt, "fetch_curve", lambda session, token, video_id, start, end: starts.append(start) or {})
+    assert rt.main([VIDEO_ID]) == 0
+    assert starts == ["2026-09-30"]
+
+
 def test_fetch_curve_falls_back_without_relative_metric():
     class Response:
         def __init__(self, status, body):

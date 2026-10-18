@@ -24,7 +24,8 @@ with `{placeholders}` must be compiled to plain text first.
 
 - **FAIL**: a number that differs, or a skipped run of three or more words. Regenerate or re-record that
   paragraph; do not "fix it in the edit".
-- **WARN**: single-word differences, often the recognizer mishearing a name. Listen to just those timestamps.
+- **WARN**: other differences (no number involved, fewer than three words skipped), often the recognizer
+  mishearing a name. Listen to just those timestamps.
 - Word accuracy near 100% with only name warnings is a clean take.
 
 The report goes to `qa/voice-check.json`. Exit 1 blocks the next station.

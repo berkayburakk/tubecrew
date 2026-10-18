@@ -20,6 +20,7 @@ python $SKILL/scripts/outliers.py @channelA @channelB @channelC --last 60 --min-
 ```
 
 - The multiple is views divided by **that channel's own median**. Raw views only rank channel size.
+- Catalog views are YouTube's rounded counts (63M, not 63,214,871). Open the video before quoting a number.
 - One video on one channel is a lead, not evidence. A topic is **double-sourced** when at least two independent
   channels beat their own median on it.
 - The strongest evidence is a controlled comparison: the same channel, same format and same period, where only

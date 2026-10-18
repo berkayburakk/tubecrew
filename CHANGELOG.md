@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.2 - 2026-10-18
+
+Fixes from a full review; every bug fix has a regression test.
+
+- `render_check.py`: reads per-stream durations in MKV/WebM files (a short audio track no longer passes), accepts
+  WebVTT timestamps without hours and UTF-16 subtitles, and fails when a subtitle file has no readable cues.
+- `voice_check.py`: decodes WebVTT entities and passes the base language code (`en` for `en-US`) to faster-whisper.
+- `upload.py`: `--skip-review` stands in for a missing or outdated review, never for a FAIL or NO-GO on the same
+  files; the upload review now binds the thumbnail hash too; `-1` verdict files sort after unsuffixed ones;
+  UTF-16, BOM and CRLF verdict files are read; the thumbnail limit follows the API (50 MB).
+- `retention.py`: the Analytics start date uses Pacific time, so a video's first day is not lost.
+- `facts_check.py`: `--ignore` matches whole values only; dates, times and filing names (10-K) are not reported
+  as unsourced numbers; files with a byte-order mark load.
+- `script_lint.py`: "No." and month abbreviations split sentences correctly; curly apostrophes in `--phrase` match.
+- `outliers.py`: re-pulling a channel from a saved catalog replaces it instead of duplicating it; approximate
+  ages count as lower bounds; `@handle/videos` input works; malformed catalogs exit 2.
+- Reports store only the file name for files outside the project folder.
+- Docs: the Codex user skill folder is `~/.agents/skills`; Codex can add the repository as a plugin marketplace;
+  `claude plugin update tubecrew@tubecrew` updates the plugin; review agents use the session's model.
+- `pyproject.toml` holds tool settings only (the repository is not a Python package).
+
 ## 0.1.1 - 2026-10-18
 
 - English-only repository: translated copies of the README and the starter kit were removed, and test samples

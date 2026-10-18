@@ -99,7 +99,9 @@ CONTRAST_RES = [
                r"(?:it's|it is|that's|this is|it was)\b", re.I),
 ]
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "vs", "etc", "e.g", "i.e", "inc", "corp", "ltd",
-                 "co", "no", "fig", "approx", "dept", "est", "u.s", "u.k", "a.m", "p.m"}
+                 "co", "fig", "approx", "dept", "est", "u.s", "u.k", "a.m", "p.m"}
+# Abbreviations only before a number: "No. 1", "Oct. 18"; "The answer is no. Then..." still ends a sentence.
+DIGIT_ABBREVIATIONS = {"no", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"}
 ARTICLES = {"the", "a", "an"}
 PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][\w.\-]*\}")
 PARA_ID_RE = re.compile(r"^\s*(?:\*\*|__)?(P\d+)(?:\*\*|__)?[.:)]?(?:\s+|$)")
@@ -197,6 +199,8 @@ def split_sentences(text: str) -> list[tuple[int, str]]:
                 word = re.findall(r"\S+$", text[start:i])
                 word = word[0].lower().lstrip("(\"'“") if word else ""
                 abbreviation = text[i:j] == "." and (word.rstrip(".") in ABBREVIATIONS
+                                                     or (word.rstrip(".") in DIGIT_ABBREVIATIONS
+                                                         and k < n and text[k].isdigit())
                                                      or re.fullmatch(r"(?:[a-z]\.)+[a-z]", word) is not None)
                 lower_next = k < n and text[k].islower()
                 if not abbreviation and not (period_like and lower_next):
@@ -332,7 +336,7 @@ def fragment_runs(sentences: list[dict]) -> list[dict]:
 
 def phrase_timing(sentences: list[dict], phrase: str, wpm: float) -> dict:
     stream = [(_norm_token(t), token_weight(t)) for s in sentences for t in tokens(s["text"])]
-    target = [_norm_token(t) for t in tokens(phrase)]
+    target = [_norm_token(t) for t in tokens(phrase.replace("’", "'").replace("‘", "'"))]  # as _clean does
     target = [t for t in target if t]
     result = {"phrase": phrase, "found": False, "word_index": None, "start_s": None, "within_limit": False}
     if not target:
@@ -499,7 +503,7 @@ def main(argv=None) -> int:
         return 2
     path = Path(args.script)
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")  # -sig: Windows editors may add a BOM
     except FileNotFoundError:
         print(f"error: script not found: {path}", file=sys.stderr)
         return 2
