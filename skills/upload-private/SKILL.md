@@ -1,6 +1,6 @@
 ---
 name: upload-private
-description: Upload a finished video to YouTube as PRIVATE through a script that refuses to run until the render check, the independent reviews and the metadata limits all pass for the exact file - with the creator's own OAuth client, never a shared key. Translated titles and an opt-in publish time are supported. Use for "upload this video", "prepare the YouTube upload", "check my title and description", "is my YouTube login still valid", or setting up YouTube API access.
+description: Upload a finished video to YouTube as PRIVATE through a script that refuses to run until the render check and the metadata limits pass and the independent reviews approve the exact file (a missing review can be waived with a written reason; a FAIL or NO-GO cannot) - with the creator's own OAuth client, never a shared key. Translated titles and an opt-in publish time are supported. Use for "upload this video", "prepare the YouTube upload", "check my title and description", "is my YouTube login still valid", or setting up YouTube API access.
 ---
 
 # Upload privately

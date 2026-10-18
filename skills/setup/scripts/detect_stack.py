@@ -58,7 +58,7 @@ INSTALL = {
     "codex": "npm install -g @openai/codex   (needs a ChatGPT plan or an OpenAI API key)",
     "comfyui": "ComfyUI with the Wan 2.2 workflow: https://docs.comfy.org/tutorials/video/wan/wan2_2",
     "cosyvoice": "https://github.com/FunAudioLLM/CosyVoice (local GPU, open source)",
-    "oauth": "Create your own OAuth client: skills/upload-private/references/oauth-setup.md",
+    "oauth": "Create your own OAuth client (upload-private skill: references/oauth-setup.md)",
     "ocr": "pip install rapidocr-onnxruntime   (optional: the on-screen text dose check, text_dose.py)",
 }
 

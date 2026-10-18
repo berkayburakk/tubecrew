@@ -609,12 +609,10 @@ def token_path(profile: str) -> Path:
 
 def login_command(profile: str) -> str:
     """The login command to suggest. Never an absolute path: it can land in reports that get shared."""
-    script = "pulse.py"
-    if sys.argv and sys.argv[0].endswith(".py"):
-        try:
-            script = Path(sys.argv[0]).resolve().relative_to(Path.cwd().resolve()).as_posix()
-        except ValueError:
-            script = Path(sys.argv[0]).name
+    try:
+        script = Path(__file__).resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        script = Path(__file__).name
     return f'python "{script}" --login --profile {profile}'
 
 

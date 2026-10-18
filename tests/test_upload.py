@@ -596,7 +596,8 @@ def test_dry_run_token_line(tmp_path, capsys, monkeypatch, home):
     assert up.main([str(project)]) == 0  # a warning never fails the dry run
     out = capsys.readouterr().out
     token_line = [ln for ln in out.splitlines() if ln.startswith("token")][0]
-    assert "WARN" in token_line and "expires in 30 hours" in token_line and "--login --profile default" in token_line
+    assert "WARN" in token_line and "expires in 30 hours" in token_line and "--login" in token_line
+    assert '"my video" --profile default' in token_line and "upload.py" in token_line   # project folder, no abs path
     assert "fake-refresh-token" not in out
     write_token(home, record={"issued_at": "2026-10-17T12:00:00+00:00", "channel_id": OTHER_CHANNEL})
     up.main([str(project)])
@@ -768,7 +769,7 @@ def test_upload_without_token_exits_2_and_releases_the_lock(tmp_path, capsys, mo
     project = make_project(tmp_path)
     assert up.main([str(project), "--upload", "--profile", "mychannel"]) == 2
     err = capsys.readouterr().err
-    assert "--login --profile mychannel" in err or "pip install" in err
+    assert ("--login" in err and "--profile mychannel" in err) or "pip install" in err
     assert not (project / "qa" / up.LOCK_NAME).exists()
 
 

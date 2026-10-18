@@ -8,7 +8,7 @@ current terms on each project's page.
 
 | Tool | Cost | How tubecrew uses it |
 |---|---|---|
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Free (Unlicense) | `outliers.py` pulls public channel catalogs to compare each video with its channel's median; `demand.py` reads search results for a reachable step |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Free (Unlicense) | `outliers.py` pulls public channel catalogs to compare each video with its channel's median; `demand.py` reads search results for a reachable step; `transcripts.py` pulls competitor captions as text |
 | [Wikimedia pageviews](https://wikimedia.org/api/rest_v1/) | Free, no key | `demand.py` measures curiosity as a multiple of a topic that already worked for the creator |
 | vidIQ | Subscription | Optional: keyword volume and outlier search through its own tools; not required |
 

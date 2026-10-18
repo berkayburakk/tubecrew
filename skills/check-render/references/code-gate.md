@@ -23,6 +23,28 @@ still. The thresholds only hold at this sampling.
 - Whole video: WARN outside the band (INFO with `--profile live`); the longest slow windows say where to look.
 - `--motion-band 20,2.2,8` changes the band for a calmer genre. Say why in the channel notes.
 
+## Sound to the end, total silence and dead air (`total_silence`, `trailing_silence`, `silence_gap`)
+
+Two `silencedetect` passes run in the same decode, at two levels:
+
+| Level | Meaning | Rule |
+|---|---|---|
+| -60 dB | total silence: a clip without audio, a cut mix, digital zero | over 1 s anywhere (body or tail) FAILs |
+| -50 dB | dead air: near silence | the last 3+ s FAIL, 2-3 s warn; a 2 s gap in the body warns |
+
+Why two levels: a natural fade-out still reads as silence at -50 dB (it can measure over a second on a clean
+ending), so a 1 s rule at -50 dB would raise false alarms. At -60 dB a fade is gone and only real dropouts remain.
+The -50 dB rules stay for what -60 dB misses: a long near-silent tail with sound just above digital zero. A -50 dB
+gap that overlaps a failed total silence is the same gap and is reported once, under `total_silence`.
+
+`--music` is for a soundtrack that is music only, with no narration. Music has no speech pauses, so any dead air
+is a hole in the mix: a body dip below -50 dB of 0.5 s warns and of 1 s fails (`silence_gap`). The last 3 s may
+fade out. Without `--music`, pauses under 2 s are normal speech rhythm and are not reported.
+
+The report keeps the raw runs (`measured.silences` at -50 dB, `measured.total_silences` at -60 dB) and a
+`measured.silence_summary`: the longest total silence in the body and in the tail (the last 25 s, at most the
+second half of a short video), the levels, and with `--music` the holes found.
+
 ## Frozen picture (`freeze`)
 
 `freezedetect` (noise 0.003, at least 2 s) on 5 fps frames (2 fps with `--fast`). The end screen is the last
@@ -45,7 +67,40 @@ narration starts in the video. Cues are matched to words by text, so "$54.2" sti
 ## Freshness (`freshness`)
 
 The subtitle or words file was saved after the video: the render may not contain the latest narration or
-captions. Re-render, or confirm the edit was cosmetic.
+captions. Re-render, or confirm the edit was cosmetic. The gap is given in seconds, minutes or hours ("2 min
+newer"); an input saved within a second of the render does not count.
+
+## Text dose (`text_dose.py`)
+
+OCR on a frame every 2 s. A frame is a text card when boxes at least 4.5% of the frame height tall, outside the
+bottom subtitle band, together cover 4% of it: full-screen type, word cards, giant numbers. Small document lines,
+chart labels and burned-in subtitles do not count. Limits: 20% of the runtime, 60% of the worst 30 s, an 18 s
+run, 3.5 entries a minute; change one with `--limit NAME=VALUE` for a text-heavy genre.
+
+## Transitions (`transitions.py`, a review aid)
+
+Not a gate: it always exits 0 (2 only for usage or environment errors) and never changes the verdict. It marks
+places for the render-auditor to look. The picture is sampled at 10 fps as 320x180 gray frames (180x320 for a
+vertical video); each pair of consecutive frames gives an absolute difference, averaged over a 32x18 grid of
+10x10-pixel cells (0-255).
+
+| Mark | Definition |
+|---|---|
+| overlay pop | 4+ cells jump by 25+ in one step, the same cells stay under 3 for 0.5 s before and after, and the whole frame stays under 8: a label, box or blur appeared or vanished with no fade |
+| screen jump | the whole frame changes by 14+ in one step; with `--cuts`, only within 0.15 s of a listed cut |
+
+Marks closer than 0.3 s are one moment. A fade or a slide spreads the change over several steps and is not
+marked; a moving cursor or scrolling text stays under 4 cells. A big, high-contrast box can push the whole frame
+over 8 and then reads as motion, not as an overlay: trust the frame pairs, not the count.
+
+- `--cuts 12.5,40,1:02.3` or `--cuts cuts.json` (a JSON list, `{"cuts": [...]}`, or plain numbers): the edit
+  points. Without it, every hard jump is marked.
+- `--mask X,Y,W,H` (video pixels, repeatable) ignores a region, such as a face cam whose cuts are expected.
+- `--frames DIR` saves a before | after PNG pair for each mark (0.2 s before, 0.1 s after).
+- `--jump` and `--step` change the two thresholds for a busier or calmer style.
+
+`qa/transitions.json` lists every mark with its time, kind, cell count or overall difference, the region it
+covers (fractions of the frame), whether it sits at a cut, and the frame pair's path.
 
 ## Exemptions
 
@@ -65,5 +120,5 @@ that hides the problem from the creator.
 
 ## What `--fast` changes
 
-Black and frozen frames are sampled at 2 fps and 160 px wide. The motion band, loudness and subtitle checks
-still run: they are cheap and the hook matters most on a preview.
+Black and frozen frames are sampled at 2 fps and 160 px wide. The motion band, loudness, silence and subtitle
+checks still run: they are cheap and the hook matters most on a preview.

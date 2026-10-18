@@ -52,6 +52,7 @@ or mock the first 60-90 seconds and ask before you build the rest.
 - **Never invent a number, quote, result or source.** If a figure is missing, ask for it or write the line
   without it. Every number on screen or in the narration lives in `facts.json` with a link.
 - **The maker never reviews their own work.** Reviews go to the agents above, with the files, not a summary.
+  Say what level of check you want (every figure, or totals only) and read which level the report ran.
 - **Reviewers are for what ships.** Drafts, tests and v1 experiments skip the review agents; the final render
   and anything published do not.
 - **Measured problems are fixed, not argued.** A script that exits 1 means fix the work. If a check is wrong
@@ -67,8 +68,8 @@ or mock the first 60-90 seconds and ask before you build the rest.
 
 ## Lessons become checks
 
-Copy this skill's `templates/` into the channel folder (`decisions.md`, `lessons.md`, `gate-counter.md`) and follow
-`references/learning-loop.md`. Lessons are numbered and append-only; check for duplicates before adding one. At the
+Copy this skill's `templates/` into the channel folder (`decisions.md`, `lessons.md`, `gate-counter.md`; `costs.md`
+goes into each video folder) and follow `references/learning-loop.md`. Lessons are numbered and append-only; check for duplicates before adding one. At the
 start of each video, put the lessons that apply into `<video>/preflight.md`. When the same lesson shows up twice,
 turn it into a script check instead of a longer rule. Log every real catch in `gate-counter.md`; after a month, a
 code gate that caught nothing is loosened and an agent gate that caught nothing is removed. The creator decides.

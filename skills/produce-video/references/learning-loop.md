@@ -15,6 +15,9 @@ expectation to fit the result. The loop is three small files in the channel fold
 The loop: decide, write the expectation with numbers, publish, measure at T+30 and T+90 with `channel-pulse` and
 `retention-by-scene`, compare, write the lesson, turn repeated lessons into checks.
 
+Each video folder also keeps `costs.md` (template in `templates/`): every credit and fee, written when it is spent.
+At T+90 its total goes next to the video's views in `decisions.md`, so a paid tool has to show what it earned.
+
 ## 1. Decisions ledger (`decisions.md`)
 
 Open an entry the day a decision is made, before any result exists: a topic choice, a package (title and

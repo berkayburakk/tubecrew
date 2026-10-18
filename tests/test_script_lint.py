@@ -361,6 +361,38 @@ def test_triggers_plain_lines(tmp_path):
     assert sl.main([str(script), "--triggers", str(plain)]) == 1
 
 
+def test_duplicate_cues_are_listed_with_lines_and_gated(tmp_path, capsys):
+    text = "\n".join([
+        "# Plan [[chart]]",                                       # L1 heading: not spoken
+        "> [[chart]] note for the editor",                        # L2 note: not spoken
+        "P01 Sales [[chart]]tripled in a year. [[map]]Ohio came first.",
+        "It kept growing. [[ Chart ]]Then it stopped.",           # L4 same paragraph, case and spacing ignored
+        "",
+        "P02 The [[map]]plant closed. [[logo]]Acme moved on.",
+        "<!-- [[logo]] hidden -->",
+        "",
+        "A last line with [[chart]] again.",                      # L9 no paragraph id
+        "```", "[[logo]]", "```",
+    ])
+    dupes = sl.duplicate_cues(text)
+    assert dupes == [{"cue": "chart", "count": 3, "lines": [3, 4, 9], "locs": ["P01", "P01", "L9"]},
+                     {"cue": "map", "count": 2, "lines": [3, 6], "locs": ["P01", "P02"]}]
+    assert sl.lint(text)["sentences"] == 7   # the cues are still not spoken words
+    path = _write(tmp_path, text)
+    assert sl.main([str(path)]) == 0         # guidance without --gate
+    out = capsys.readouterr().out
+    assert 'Duplicate [[cue]] anchors: 2 -> "chart" x3 at L3, L4, L9; "map" x2 at L3, L6' in out
+    assert sl.main([str(path), "--gate", "--json"]) == 1
+    assert "2 duplicate cue anchors" in json.loads(capsys.readouterr().out)["gate"]["reasons"]
+
+
+def test_unique_cues_pass_the_gate(tmp_path, capsys):
+    path = _write(tmp_path, "P01 Acme [[chart-1]]sells widgets. [[chart-2]]It makes money on service contracts.")
+    assert sl.lint(path.read_text(encoding="utf-8"))["duplicate_cues"] == []
+    assert sl.main([str(path), "--gate"]) == 0
+    assert "Duplicate [[cue]] anchors: 0" in capsys.readouterr().out
+
+
 def test_trigger_file_errors(tmp_path):
     script = _write(tmp_path, TRIGGER_SCRIPT)
     assert sl.main([str(script), "--triggers", str(tmp_path / "missing.json")]) == 2

@@ -16,6 +16,8 @@ Voice is the most expensive thing to redo, so the script is finished before any 
 - Write for the ear: one idea per sentence, nothing over 30 words, signposts the listener needs ("three numbers
   will tell you...") because they cannot see the page.
 - Mark what is on screen next to each beat (`[ON SCREEN: ...]`). A narration with nothing to look at is a podcast.
+- Link sections with "but" or "therefore", not "and then": each section changes or follows from the last. Say a
+  thing once; if two paragraphs explain the same point, cut one before cutting a number or a needed hedge.
 
 ## 2. The opening (most viewers decide in the first 8-25 seconds)
 

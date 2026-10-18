@@ -13,7 +13,9 @@ sentences that open with the same word, AI-vocabulary hits, vague attributions (
 in sentences that name no source, setup phrases ("here's the thing"), "not X, but Y" / "isn't just ... it's"
 contrasts, em/en dashes, "What if" openers, fragment runs (3+ sentences under 5 words), exclamation marks, the
 words spoken in the first 5 seconds and the final sentence. With --phrase: the second at which the phrase starts
-and whether that is within 30 s.
+and whether that is within 30 s. Duplicate `[[cue]]` anchors in the spoken text (case and spacing ignored) are
+listed with their lines: each cue keys one word-timed visual, so a second copy fires it twice or at the wrong word.
+Name repeats apart (`[[chart-2]]`).
 
 Opening checks (warnings, never a gate; seconds are estimated from word counts at --wpm):
   - "you already know" / "bear with me" / greeting phrases anywhere in the first ~17 s, or an "Imagine" opener
@@ -35,7 +37,7 @@ Run:
   python script_lint.py script.md --triggers visuals/triggers.json
 
 --gate fails (exit 1) on any sentence over 30 words, any AI-vocabulary hit or unsourced vague attribution not in
---allow, or a phrase that starts after 30 s (or is missing). A missing trigger exits 1 even without --gate. Other
+--allow, a duplicate cue anchor, or a phrase that starts after 30 s (or is missing). A missing trigger exits 1 even without --gate. Other
 pattern counts and the opening checks are guidance, never a gate. The English word lists find nothing in other
 languages; the length, runtime, number, first-sentence, intro and phrase metrics still work there.
 
@@ -177,6 +179,7 @@ ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "vs", "etc",
 DIGIT_ABBREVIATIONS = {"no", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"}
 ARTICLES = {"the", "a", "an"}
 PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][\w.\-]*\}")
+CUE_RE = re.compile(r"\[\[([^\]]*)\]\]")
 PARA_ID_RE = re.compile(r"^\s*(?:\*\*|__)?(P\d+)(?:\*\*|__)?[.:)]?(?:\s+|$)")
 
 
@@ -185,7 +188,7 @@ PARA_ID_RE = re.compile(r"^\s*(?:\*\*|__)?(P\d+)(?:\*\*|__)?[.:)]?(?:\s+|$)")
 # ---------------------------------------------------------------------------------------------------------------
 
 def _clean(s: str) -> str:
-    s = re.sub(r"\[\[[^\]]*\]\]", " ", s)
+    s = CUE_RE.sub(" ", s)
     s = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", s)
     s = re.sub(r"\[[^\]]*\]", " ", s)
     s = re.sub(r"\*\*|__|~~|`", "", s)
@@ -194,18 +197,11 @@ def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def paragraphs(text: str) -> list[dict]:
-    """Spoken paragraphs: {"id": "P01" | None, "pieces": [(line number, cleaned text), ...]}."""
-    out: list[dict] = []
-    current = None
+def _script_lines(text: str):
+    """Yield (line number, text) for every line that may hold spoken words, HTML comments removed, and
+    (line number, None) for a line that ends a paragraph (blank, heading, note, table, rule or code fence).
+    Front matter and fenced code yield nothing."""
     in_comment = in_fence = in_front = False
-
-    def close():
-        nonlocal current
-        if current and current["pieces"]:
-            out.append(current)
-        current = None
-
     for i, raw in enumerate(text.splitlines(), start=1):
         if i == 1 and raw.strip() == "---":
             in_front = True
@@ -216,7 +212,7 @@ def paragraphs(text: str) -> list[dict]:
             continue
         if raw.lstrip().startswith(("```", "~~~")):
             in_fence = not in_fence
-            close()
+            yield i, None
             continue
         if in_fence:
             continue
@@ -233,6 +229,24 @@ def paragraphs(text: str) -> list[dict]:
                 kept, rest, in_comment = kept + rest[:start] + " ", rest[start + 4:], True
         s = kept.strip()
         if not s or s.startswith(("#", ">", "|")) or re.fullmatch(r"[-*_=\s]{3,}", s):
+            yield i, None
+            continue
+        yield i, s
+
+
+def paragraphs(text: str) -> list[dict]:
+    """Spoken paragraphs: {"id": "P01" | None, "pieces": [(line number, cleaned text), ...]}."""
+    out: list[dict] = []
+    current = None
+
+    def close():
+        nonlocal current
+        if current and current["pieces"]:
+            out.append(current)
+        current = None
+
+    for i, s in _script_lines(text):
+        if s is None:
             close()
             continue
         m = PARA_ID_RE.match(s)
@@ -653,6 +667,30 @@ def load_triggers(path: Path) -> list[dict]:
     return items
 
 
+def duplicate_cues(text: str) -> list[dict]:
+    """`[[cue]]` anchors that appear more than once in the spoken text (case and spacing ignored), in order of
+    first appearance, with every line and location. A cue keys one word-timed visual to the word after it; a second
+    copy fires that visual twice, or the timeline takes the wrong copy and it fires at the wrong word."""
+    seen: dict[str, dict] = {}
+    pid = None
+    for line, s in _script_lines(text):
+        if s is None:
+            pid = None
+            continue
+        m = PARA_ID_RE.match(s)
+        if m:
+            pid = m.group(1)
+        for c in CUE_RE.finditer(s):
+            name = re.sub(r"\s+", " ", c.group(1)).strip()
+            if not name:
+                continue
+            entry = seen.setdefault(name.casefold(), {"cue": name, "count": 0, "lines": [], "locs": []})
+            entry["count"] += 1
+            entry["lines"].append(line)
+            entry["locs"].append(pid or f"L{line}")
+    return [e for e in seen.values() if e["count"] > 1]
+
+
 def check_triggers(text: str, triggers: list[dict]) -> dict:
     """Each trigger's word (or words) must occur more than `nth` times in its paragraph (or the whole script)."""
     whole: list[str] = []
@@ -715,6 +753,7 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
         "phrase": phrase_timing(sents, phrase, wpm) if phrase else None,
         "opening": opening_checks(text, sents, wpm),
         "triggers": check_triggers(text, triggers) if triggers is not None else None,
+        "duplicate_cues": duplicate_cues(text),
     }
     reasons = []
     if result["long_sentences"]:
@@ -726,6 +765,9 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
     unsourced = [h for h in vague if not h["allowed"] and not h["named_source"]]
     if unsourced:
         reasons.append(f"{len(unsourced)} vague attribution{'s' if len(unsourced) != 1 else ''} without a source")
+    dupes = result["duplicate_cues"]
+    if dupes:
+        reasons.append(f"{len(dupes)} duplicate cue anchor{'s' if len(dupes) != 1 else ''}")
     ph = result["phrase"]
     if ph is not None and not ph["within_limit"]:
         reasons.append("phrase not found" if not ph["found"] else
@@ -789,6 +831,11 @@ def print_human(path: str, r: dict, gate: bool) -> None:
              if r["fragment_runs"] else ""))
     print(f"  Exclamation marks: {len(r['exclamations'])}"
           + (" -> " + _locs(r["exclamations"]) if r["exclamations"] else ""))
+    dupes = r["duplicate_cues"]
+    shown = "; ".join(f"\"{d['cue']}\" x{d['count']} at " + ", ".join(f"L{n}" for n in d["lines"])
+                      for d in dupes[:10])
+    more = f"; +{len(dupes) - 10} more" if len(dupes) > 10 else ""
+    print(f"  Duplicate [[cue]] anchors: {len(dupes)}" + (f" -> {shown}{more}" if dupes else ""))
     ph = r["phrase"]
     if ph is not None:
         if not ph["found"]:
@@ -827,8 +874,8 @@ def main(argv=None) -> int:
     ap.add_argument("--wpm", type=float, default=155.0, help="speaking rate in words per minute (default 155)")
     ap.add_argument("--phrase", help="search phrase that should be spoken within the first 30 seconds")
     ap.add_argument("--gate", action="store_true",
-                    help="exit 1 on a sentence over 30 words, an AI-vocabulary hit, an unsourced vague attribution "
-                         "or a late phrase")
+                    help="exit 1 on a sentence over 30 words, an AI-vocabulary hit, an unsourced vague attribution, "
+                         "a duplicate [[cue]] anchor or a late phrase")
     ap.add_argument("--allow", default="",
                     help="AI-vocabulary or vague-attribution terms to accept, comma-separated")
     ap.add_argument("--triggers", help="words on-screen animations are keyed to (JSON or plain lines); "

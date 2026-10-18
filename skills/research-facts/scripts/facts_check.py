@@ -24,8 +24,10 @@ Script checks (`--script`): headings, `>` notes, HTML comments, tables, `[[cue]]
 directions are skipped. `{key}` placeholders must exist. Every other digit-based number ("$12.5 billion",
 "12.5bn", "41%", "3,000", "12,500,000,000") is normalized with its scale and matched against the facts, using each
 fact's unit text for scale, currency and percent:
-  - no hedge: the fact rounded to the stated precision must equal the number;
-  - about / around / roughly / nearly / almost / approximately / close to: within 3 % of the fact;
+  - no hedge: the fact rounded to the stated precision must equal the number, and be within 5 % of the fact
+    (12.52 as "12.5" passes; 0.45 as "0.5" is 11 % off and needs a hedge);
+  - about / around / roughly / nearly / almost / approximately / close to: within 3 % of the fact, or the fact
+    rounded to the stated precision within 15 % ("about 0.5" for 0.45); "nearly" and "almost" only round up;
   - more than / over / above (at least): the fact is above (or equal to) the number;
   - up to / under / below / less than / fewer than (at most): the fact is at or below the number.
   A bound more than 2x away from the fact is not sourced by it ("more than 3" does not cite 3 billion).
@@ -62,6 +64,14 @@ TYPES = ("primary", "news", "estimate", "market", "own-calculation")
 CALC_TOLERANCE = 0.01
 APPROX_TOLERANCE = Decimal("0.03")
 BOUND_FACTOR = Decimal(2)
+# Rounding to the written precision is exact enough for most numbers (12.52 as "12.5" is 0.2 % off), but a
+# one-digit number can move a lot: 0.45 written "0.5" is 11 % off. Past 5 % an unhedged round number is not
+# sourced; "about 0.5" is, as long as the rounding stays within 15 %. Beyond that the digit itself misleads
+# ("about 1 billion" for 1.45 billion): write one more digit.
+ROUNDING_TOLERANCE = Decimal("0.05")
+HEDGED_ROUNDING_MAX = Decimal("0.15")
+# "nearly 0.5" and "almost 0.5" say the fact is below 0.5: a rounded-up number only.
+UNDER_HEDGES = {"nearly", "almost"}
 TYPE_INFO = {"news": "news source; say it with 'reportedly' (or name the outlet)",
              "estimate": "estimate; say it with 'estimated'",
              "market": "market data; take a closing price from the exchange's own series, not an aggregator, "
@@ -487,23 +497,55 @@ def _fact_table(facts: dict) -> list[dict]:
     return table
 
 
-def _matches(n: dict, fact_abs: Decimal) -> bool:
-    num_abs = abs(n["value"])
-    kind = HEDGE_KIND.get(n["hedge"] or "")
-    if kind == "approx":
-        if fact_abs == 0:
-            return num_abs == 0
-        return abs(fact_abs - num_abs) <= APPROX_TOLERANCE * fact_abs
-    if kind in ("above", "at_least"):
-        ok = fact_abs > num_abs if kind == "above" else fact_abs >= num_abs
-        return ok and fact_abs <= num_abs * BOUND_FACTOR
-    if kind == "below":
-        return fact_abs <= num_abs and fact_abs * BOUND_FACTOR >= num_abs
+def _rounds_to(n: dict, fact_abs: Decimal) -> bool:
+    """True when the fact, rounded to the precision the number is written with, is that number."""
     try:
         q = Decimal(1).scaleb(-n["decimals"])
         return (fact_abs / n["scale"]).quantize(q, rounding=ROUND_HALF_UP) == n["mantissa"]
     except InvalidOperation:
         return False
+
+
+def _off(fact_abs: Decimal, num_abs: Decimal) -> Decimal:
+    """How far the number is from the fact, relative to the fact."""
+    if fact_abs == 0:
+        return Decimal(0) if num_abs == 0 else Decimal("Infinity")
+    return abs(fact_abs - num_abs) / fact_abs
+
+
+def _matches(n: dict, fact_abs: Decimal) -> bool:
+    num_abs = abs(n["value"])
+    kind = HEDGE_KIND.get(n["hedge"] or "")
+    off = _off(fact_abs, num_abs)
+    if kind == "approx":
+        if off <= APPROX_TOLERANCE:
+            return True
+        if n["hedge"] in UNDER_HEDGES and fact_abs > num_abs:
+            return False
+        return off <= HEDGED_ROUNDING_MAX and _rounds_to(n, fact_abs)
+    if kind in ("above", "at_least"):
+        ok = fact_abs > num_abs if kind == "above" else fact_abs >= num_abs
+        return ok and fact_abs <= num_abs * BOUND_FACTOR
+    if kind == "below":
+        return fact_abs <= num_abs and fact_abs * BOUND_FACTOR >= num_abs
+    return off <= ROUNDING_TOLERANCE and _rounds_to(n, fact_abs)
+
+
+def rounding_hint(n: dict, fact_abs: Decimal) -> str:
+    """Why a number that is the fact rounded to its written precision still does not match it, or ""."""
+    if not _rounds_to(n, fact_abs):
+        return ""
+    kind = HEDGE_KIND.get(n["hedge"] or "")
+    off = _off(fact_abs, abs(n["value"]))
+    if kind is None and off > ROUNDING_TOLERANCE:
+        return (f"; it is that fact rounded, but more than {ROUNDING_TOLERANCE:.0%} away: write the exact value "
+                "or add a hedge such as \"about\"")
+    if kind == "approx" and n["hedge"] in UNDER_HEDGES and fact_abs > abs(n["value"]):
+        return f"; \"{n['hedge']}\" says the fact is below this number, but it is above: say \"about\""
+    if kind == "approx" and off > HEDGED_ROUNDING_MAX:
+        return (f"; rounded more than {HEDGED_ROUNDING_MAX:.0%} away, the number misleads even with "
+                f"\"{n['hedge']}\": write one more digit")
+    return ""
 
 
 def match_number(n: dict, table: list[dict]) -> tuple[dict | None, dict | None]:
@@ -560,6 +602,7 @@ def check_script(text: str, facts: dict, do_not_use: list, ignore: list[Decimal]
                     base = max(closest["abs"], abs(n["value"]))
                     off = float(abs(closest["abs"] - abs(n["value"])) / base * 100) if base else 0.0
                     msg += f"; closest is {closest['key']} = {closest['value']:g} {closest['unit']} ({off:.1f}% off)"
+                    msg += rounding_hint(n, closest["abs"])
                     row["closest"] = closest["key"]
                 findings.append(_finding("FAIL", "unsourced", msg, line=lineno, text=shown))
             numbers.append(row)

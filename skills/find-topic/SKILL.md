@@ -9,7 +9,8 @@ A topic is a bet. This skill makes the bet with numbers: what beat its own chann
 and whether a channel your size can be seen there. Free tools only; no API key needed.
 
 `$SKILL` below is this skill's folder (the base directory shown when the skill loads). Detailed rules:
-`$SKILL/references/topic-rules.md` (candidate kinds, gates, scoring) and `$SKILL/references/demand.md`.
+`$SKILL/references/topic-rules.md` (candidate kinds, gates, scoring), `$SKILL/references/demand.md` and
+`$SKILL/references/transcripts.md` (openings, sector loop).
 
 ## 1. Scan channels, not topics
 
@@ -58,6 +59,7 @@ Three kinds (rules in `references/topic-rules.md`): catalog outliers, **calendar
 - the **two-question gate**: would most of the last video's audience watch it? Would a stranger click it? A "no"
   moves it to the backup list. Then: will the package still be clicked in 6 months, and still be true?
 - the evidence video's **first 60 seconds**: first sentence, first number, first cut. Copy the opening mechanics.
+  `python $SKILL/scripts/transcripts.py <id> --first 60` gives the timed lines; watch for the cut.
 
 Measure each finalist title itself as a query with `demand.py`; zero suggestions is the label "no query".
 
@@ -73,6 +75,9 @@ strongest and recommends one with "low confidence": a round never ends without a
 The creator picks. Append one line to a `topic-decisions.md` log: the pick, the rejected candidates and the gate
 that dropped each ("not interesting" is not a reason). After ten videos, the log shows which signals predicted a
 good video.
+
+Every couple of weeks, read the new outliers' transcripts and keep only lessons that change what you do; one
+video's claim is never a rule (loop in `references/transcripts.md`).
 
 ## Report back
 

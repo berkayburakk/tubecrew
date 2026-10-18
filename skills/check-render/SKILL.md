@@ -26,7 +26,7 @@ instead of applying one gain: tame the loudest peaks and run it again.
 
 ```bash
 python $SKILL/scripts/render_check.py render/final.mp4 --srt voice/captions.srt \
-    --words qa/voice-check-transcript.json [--words-offset 1.5] [--profile live]
+    --words qa/voice-check-transcript.json [--words-offset 1.5] [--profile live] [--music]
 ```
 
 One decode pass; writes `qa/render-check.json` bound to the video's SHA-256.
@@ -34,6 +34,7 @@ One decode pass; writes `qa/render-check.json` bound to the video's SHA-256.
 | Check | Fails when |
 |---|---|
 | Streams, sound | no video or audio; audio ends 0.5 s early; the last 3+ s are silent |
+| Total silence | over 1 s below -60 dB anywhere (a dropout, not a fade) |
 | Loudness | outside -20..-9 LUFS (warns outside -16..-12) |
 | Black frames | a black stretch of 1 s or more before the final second |
 | Frozen picture | 3+ s still in the hook, or anywhere outside the end screen (`animated`) |
@@ -41,11 +42,12 @@ One decode pass; writes `qa/render-check.json` bound to the video's SHA-256.
 | Subtitles | a cue ends after the video; the file has no readable cues |
 | Subtitles vs words | a cue closes over 0.15 s before its last word ends; the median drift is over 0.25 s |
 
-Warnings do not block: body motion outside the reference band, few cuts in the hook, a number split from its
-unit, "non -cash" hyphen gaps, long lines, and inputs saved after the render (freshness).
+Warnings do not block: body motion outside the band, few cuts in the hook, a number split from its unit, hyphen
+gaps ("non -cash"), long lines, inputs saved after the render.
 
 - `--profile live` for camera and screen recordings, where a face or cursor carries the picture: the hook band
   only warns and body freezes warn at 8 s.
+- `--music` for a music-only soundtrack (no narration): dead air below -50 dB warns at 0.5 s, fails at 1 s.
 - `--words` is the narration's word-timed transcript (check-voiceover saves one); `--words-offset` is where the
   narration starts in the video. Without it, cue ends against speech are not measured.
 - `--motion-band EVENTS,FROZEN,SLOW` loosens the band for a calmer genre; write down why.
@@ -59,28 +61,29 @@ pip install rapidocr-onnxruntime     # optional, only this script needs it
 python $SKILL/scripts/text_dose.py render/final.mp4
 ```
 
-OCR on a frame every 2 s; a frame is a text card when large text (4.5%+ of the height, outside the subtitle band)
-covers 4% of it. Fails when cards pass 20% of the runtime, 60% of the worst 30 s, an 18 s run or 3.5 entries a
-minute. Writes `qa/text-dose.json`. Run it on a low-resolution preview too, before the full render.
+Fails when text cards (large text outside the subtitle band, OCR every 2 s) pass 20% of the runtime, 60% of the
+worst 30 s, an 18 s run or 3.5 entries a minute. Writes `qa/text-dose.json`. Run it on a low-resolution preview
+too, before the full render.
 
 ## When a check is wrong for this video
 
-The creator decides, not the agent. They write `qa/RENDER-EXEMPTION-<YYYY-MM-DD>.md`:
-
-```
-Video: render/final.mp4 sha256:<first 12 hex>
-Checks: freeze, hook_motion
-Reason: screen recording; the face cam moves while the screen stays still (decided by the creator)
-```
-
-`render_check.py` then reports those FAILs as WARN, marked exempted with the reason, while the hash matches. A new
-render needs a new `Video:` line. Never add invisible motion or move pixels to slip past a check.
+The creator decides, not the agent, in `qa/RENDER-EXEMPTION-<YYYY-MM-DD>.md` (`Video:` line with the hash,
+`Checks:`, `Reason:`; format in `references/code-gate.md`). Those FAILs become WARN while the hash matches. Never
+add invisible motion or move pixels to slip past a check.
 
 ## 4. Review gate
 
-Give the `render-auditor` agent the video path, the project folder, `qa/render-check.json`, `qa/text-dose.json`
-and the script. It reuses the code measurements and spends its time on frames: empty or broken charts, text cut
-off at the edges, overlays covering a number, pictures that contradict the narration, the end screen.
+```bash
+python $SKILL/scripts/transitions.py render/final.mp4 --frames qa/transition-frames [--cuts 12.5,40,61.2]
+```
+
+A review aid, not a gate: marks overlays (label, box, blur) that pop in or out in one frame and hard jumps (only
+at `--cuts` when given) in `qa/transitions.json`, with before | after PNG pairs.
+
+Give the `render-auditor` agent the video, the project folder, `qa/render-check.json`, `qa/text-dose.json`,
+`qa/transitions.json` and the script. It reuses the measurements and judges frames: empty or broken charts,
+clipped text, overlays covering a number or popping without a fade, pictures that contradict the narration, the
+end screen.
 
 Save its report unchanged as `qa/RENDER-AUDIT-<date>.md`. The first lines are fixed:
 

@@ -168,11 +168,11 @@ the topic, the first 60 to 90 seconds, and publishing.
 |---|---|---|
 | `setup` | Detects the creator's tools and subscriptions, suggests a stack per station, installs the free pieces, offers the publish guard | `detect_stack.py`, `publish_guard.py` |
 | `produce-video` | Keeps the order and the gates from idea to private upload, plus the decisions ledger and lessons | - |
-| `find-topic` | Ranks competitor videos by how far they beat their own channel's median; measures demand from free sources and a reachable step for small channels | `outliers.py`, `demand.py` |
+| `find-topic` | Ranks competitor videos by how far they beat their own channel's median; measures demand from free sources and a reachable step for small channels; pulls competitor transcripts | `outliers.py`, `demand.py`, `transcripts.py` |
 | `research-facts` | One `facts.json` with every figure's source, type and date; gates the script against it | `facts_check.py` |
 | `write-script` | An opening built for the first 30 seconds, a humanizing pass against 26 AI-writing patterns, a mechanical lint | `script_lint.py` |
 | `check-voiceover` | Compares what the voiceover said with the script, paragraph by paragraph; picks the best take and trims long pauses | `voice_check.py`, `pick_takes.py`, `trim_silence.py` |
-| `check-render` | Loudness, silences, black and frozen frames, a hook that really moves, subtitles against the spoken words; the final mix and the text dose | `render_check.py`, `normalize_audio.py`, `text_dose.py` |
+| `check-render` | Loudness, silences, black and frozen frames, a hook that really moves, subtitles against the spoken words; the final mix, the text dose and overlay pops | `render_check.py`, `normalize_audio.py`, `text_dose.py`, `transitions.py` |
 | `check-thumbnail` | Format, size, dark area, clutter, text rules and title repetition, with a feed-size preview of every candidate | `thumb_check.py` |
 | `localize` | Meaning-first translation that keeps every number, a native-listener audit, and a timing check for each dubbed paragraph | `dub_fit.py` |
 | `upload-private` | Metadata limits, chapter rules, translations, hash-bound verdicts, token health and a resumable, private-only upload | `upload.py` |
@@ -193,7 +193,7 @@ the topic, the first 60 to 90 seconds, and publishing.
 
 ### The project folder
 
-One folder per video. Every gate writes its result into `qa/`:
+One folder per video. Gate results and review verdicts live in `qa/`:
 
 ```text
 my-video/

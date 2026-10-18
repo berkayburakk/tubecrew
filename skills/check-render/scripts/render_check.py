@@ -3,20 +3,21 @@
 
 What it does
     Measures the defects of a finished render that code can measure, in one ffmpeg decode pass:
-    missing streams, audio that stops before the picture, silent tails and gaps, integrated loudness and true
-    peak, black stretches, frozen pictures, a hook that does not move (a motion band that also catches a slow zoom
-    on a still image), and with --srt subtitle cues that run past the end, overlap, are too long to read, split a
-    number from its unit, or (with --words) close before their last word is spoken. It writes a JSON report bound
-    to the video's SHA-256 so an upload step can refuse a verdict that belongs to a different file.
+    missing streams, audio that stops before the picture, total silence (a dropout below -60 dB) anywhere, silent
+    tails and gaps, dead air in a music-only soundtrack, integrated loudness and true peak, black stretches, frozen
+    pictures, a hook that does not move (a motion band that also catches a slow zoom on a still image), and with
+    --srt subtitle cues that run past the end, overlap, are too long to read, split a number from its unit, or
+    (with --words) close before their last word is spoken. It writes a JSON report bound to the video's SHA-256 so
+    an upload step can refuse a verdict that belongs to a different file.
 
 Why
     These defects repeat from video to video and are cheap to measure but easy to miss by eye: an end screen
-    without sound, a 2-second black gap from a missing clip, an opening that sits on one picture, a subtitle that
-    vanishes before the sentence ends. A reviewer's time is better spent on frames and meaning; this script
-    handles the rest.
+    without sound, a second of digital silence where a clip lost its audio, a 2-second black gap from a missing
+    clip, an opening that sits on one picture, a subtitle that vanishes before the sentence ends. A reviewer's time
+    is better spent on frames and meaning; this script handles the rest.
 
 How to run
-    python render_check.py render/final.mp4 [--profile animated|live] [--hook-seconds 45]
+    python render_check.py render/final.mp4 [--profile animated|live] [--music] [--hook-seconds 45]
                            [--srt voice/captions.srt [--words qa/voice-check-transcript.json] [--words-offset 0]]
                            [--motion-band 38,2.2,4.9] [--fast] [--out PATH] [--json]
 
@@ -24,6 +25,9 @@ How to run
         may stand fully still for 3 s, and a hook that stands still (or only zooms slowly) fails.
     --profile live: camera or screen recordings, where a face or a cursor carries the picture. The hook motion
         band only warns and body freezes warn at 8 s.
+    --music: the soundtrack is music only (no narration), so any dead air is a hole in the mix: a dip below
+        -50 dB of 0.5 s warns and of 1 s fails (the last 3 s may fade out). Without it, pauses of up to 2 s are
+        normal speech rhythm.
     --words: word-timed JSON of the narration (Whisper style: segments with "words", or a "words" list, e.g. the
         transcript check-voiceover saves). --words-offset is where the narration starts inside the video.
     --motion-band EVENTS,FROZEN,SLOW: the reference band (minimum events per minute, maximum frozen %, maximum
@@ -72,15 +76,26 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "render_check.py"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 # ----------------------------------------------------------------------------------------------- thresholds
 AUDIO_SHORT_MAX_S = 0.5        # audio may end this much before the picture (AAC frame padding); more = mute end screen
 TAIL_EPS_S = 0.25              # a silence ending this close to the end of the audio is the tail of the video
 TRAILING_SILENCE_FAIL_S = 3.0  # a silent last 3 s sounds like a broken upload and kills the end screen
 SILENCE_GAP_WARN_S = 2.0       # dead air of 2 s in the body feels like a mistake to the viewer
-SILENCE_NOISE_DB = -50         # below -50 dB is silence for speech and music mixes (natural fades stay above it)
+SILENCE_NOISE_DB = -50         # below -50 dB is near silence: dead air in a speech or music mix
 SILENCE_MIN_S = 1.5            # silencedetect minimum; shorter pauses are normal speech rhythm
+# Total silence. A natural fade-out still reads as silence at -50 dB (over a second of it on a clean ending), so
+# -60 dB is the line that separates a fade from a real dropout: a clip without audio, a cut mix, digital zero.
+TOTAL_SILENCE_DB = -60
+TOTAL_SILENCE_MAX_S = 1.0      # total silence longer than 1 s anywhere (body or tail) is a dropout, not a pause
+TAIL_WINDOW_S = 25.0           # the last 25 s are the tail in the report (end screens run 12-20 s, plus a margin)
+# --music: a music-only soundtrack has no speech pauses, so a short dip below -50 dB is already a hole in the mix.
+MUSIC_HOLE_WARN_S = 0.5        # half a second of dead air in music is audible
+MUSIC_HOLE_FAIL_S = 1.0        # a full second sounds like a broken mix
+MUSIC_FADE_S = 3.0             # the music may fade out over the last 3 s
+SILENCE_TAG_TOTAL = "tc_total"  # silencedetect instance names: two detectors share one log
+SILENCE_TAG_DEAD = "tc_dead"
 
 LUFS_WARN_LOW, LUFS_WARN_HIGH = -16.0, -12.0   # YouTube normalizes to about -14 LUFS; stay near it
 LUFS_FAIL_LOW, LUFS_FAIL_HIGH = -20.0, -9.0    # far outside: quiet videos sound weak, hot ones get turned down
@@ -137,8 +152,8 @@ EXEMPTION_REASON_MIN = 12      # a reason shorter than this is a stamp, not a re
 ANIMATED, LIVE = "animated", "live"
 PASS, WARN, FAIL, INFO = "PASS", "WARN", "FAIL", "INFO"
 
-CHECK_NAMES = ("decode", "video_stream", "audio_stream", "audio_length", "trailing_silence", "silence_gap",
-               "loudness", "true_peak", "black", "freeze", "hook_motion", "motion", "subtitle_end",
+CHECK_NAMES = ("decode", "video_stream", "audio_stream", "audio_length", "total_silence", "trailing_silence",
+               "silence_gap", "loudness", "true_peak", "black", "freeze", "hook_motion", "motion", "subtitle_end",
                "subtitle_overlap", "subtitle_lines", "subtitle_text", "subtitle_words", "subtitle_drift",
                "freshness")
 NOT_EXEMPTABLE = {"decode"}    # a file ffmpeg cannot decode is broken, whatever the reason
@@ -159,6 +174,16 @@ def fmt_time(seconds: float | None) -> str:
     if round(sec, 1) >= 60.0:
         minutes, sec = minutes + 1, 0.0
     return f"{int(minutes):02d}:{sec:04.1f}"
+
+
+def fmt_age(seconds: float) -> str:
+    """A time difference in words: '40 s', '2 min', '1.5 h' (never '0.0 h')."""
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.0f} s"
+    if seconds < 360:   # under 0.1 h: hours would round to 0.0 or 0.1
+        return f"{seconds / 60:.0f} min"
+    return f"{seconds / 3600:.1f} h"
 
 
 def find_project(video: Path) -> Path:
@@ -297,6 +322,8 @@ def parse_ffprobe(text: str) -> dict:
 _BLACK_RE = re.compile(r"black_start:\s*(-?[\d.]+)\s+black_end:\s*(-?[\d.]+)")
 _FREEZE_RE = re.compile(r"freezedetect\.freeze_(start|end):\s*(-?[\d.]+)")
 _SILENCE_RE = re.compile(r"silence_(start|end):\s*(-?[\d.]+)")
+# "[silencedetect@tc_total @ 0x...] silence_start: 1.5"; older ffmpeg names the instance "tc_total" only.
+_SILENCE_LINE_RE = re.compile(r"\[([^\[\]]+?) @ [^\[\]]*\]\s*silence_(start|end):\s*(-?[\d.]+)")
 
 
 def _pair_events(events: list[tuple[str, float]], until: float | None) -> list[list[float]]:
@@ -325,9 +352,17 @@ def parse_freezedetect(stderr: str, duration: float | None = None) -> list[list[
     return _pair_events([(k, float(v)) for k, v in _FREEZE_RE.findall(stderr)], duration)
 
 
-def parse_silencedetect(stderr: str, duration: float | None = None) -> list[list[float]]:
-    """silencedetect lines -> [[start, end], ...]; a silence still open at the end runs to `duration`."""
-    return _pair_events([(k, float(v)) for k, v in _SILENCE_RE.findall(stderr)], duration)
+def parse_silencedetect(stderr: str, duration: float | None = None, tag: str | None = None) -> list[list[float]]:
+    """silencedetect lines -> [[start, end], ...]; a silence still open at the end runs to `duration`.
+
+    With `tag`, only lines from the silencedetect instance of that name count (the decode pass runs two detectors,
+    one for total silence and one for dead air, and both write to the same log).
+    """
+    if tag is None:
+        return _pair_events([(k, float(v)) for k, v in _SILENCE_RE.findall(stderr)], duration)
+    events = [(k, float(v)) for ctx, k, v in _SILENCE_LINE_RE.findall(stderr)
+              if ctx == tag or ctx.endswith("@" + tag)]
+    return _pair_events(events, duration)
 
 
 def _num(text: str) -> float:
@@ -611,20 +646,7 @@ def _check_audio(m: dict) -> list[dict]:
         else:
             out.append(check("audio_length", PASS, f"audio runs to the end (gap {max(gap, 0.0):.2f} s)"))
 
-    trailing, gaps = [], []
-    for start, end in m.get("silences") or []:
-        length = end - start
-        if end >= audio_end - TAIL_EPS_S:
-            if length >= TRAILING_SILENCE_FAIL_S:
-                trailing.append(check("trailing_silence", FAIL,
-                                      f"the last {length:.1f} s are silent (limit {TRAILING_SILENCE_FAIL_S:g} s)",
-                                      start, end))
-            elif length >= SILENCE_GAP_WARN_S:
-                trailing.append(check("trailing_silence", WARN, f"silent tail of {length:.1f} s", start, end))
-        elif length >= SILENCE_GAP_WARN_S:
-            gaps.append(check("silence_gap", WARN, f"{length:.1f} s of silence in the body", start, end))
-    out += trailing or [check("trailing_silence", PASS, "sound continues to the end")]
-    out += gaps or [check("silence_gap", PASS, f"no silent gap of {SILENCE_GAP_WARN_S:g} s or more")]
+    out += _check_silence(m, audio_end)
 
     lufs = m.get("lufs")
     if lufs is None:
@@ -646,6 +668,94 @@ def _check_audio(m: dict) -> list[dict]:
             out.append(check("true_peak", WARN, f"true peak {peak:.1f} dBTP, above {TRUE_PEAK_WARN_DBTP:g} dBTP"))
         else:
             out.append(check("true_peak", PASS, f"true peak {peak:.1f} dBTP"))
+    return out
+
+
+def _check_silence(m: dict, audio_end: float) -> list[dict]:
+    """Total silence (-60 dB) anywhere, then dead air (-50 dB) at the end and in the body.
+
+    A -50 dB run that overlaps a failed total silence is the same gap and is not reported twice. With
+    m["music"] the soundtrack is music only, so body dead air uses the tighter music limits. The numbers behind the
+    checks are written back into m["silence_summary"].
+    """
+    music = bool(m.get("music"))
+    at_end = audio_end - TAIL_EPS_S
+    tail_start = max(audio_end - TAIL_WINDOW_S, audio_end / 2)   # a short video keeps a body: at most its 2nd half
+    tail_s = round(audio_end - tail_start, 1)
+    totals = m.get("total_silences") or []
+
+    def in_tail(run) -> bool:
+        return run[0] >= tail_start or run[1] >= at_end
+
+    out: list[dict] = []
+    failed: list[tuple[float, float]] = []
+    for start, end in totals:
+        length = end - start
+        if length <= TOTAL_SILENCE_MAX_S:
+            continue
+        if end >= at_end:
+            where = "at the end"
+        elif in_tail((start, end)):
+            where = f"in the tail (last {tail_s:g} s)"
+        else:
+            where = "in the body"
+        out.append(check("total_silence", FAIL, f"{length:.1f} s of total silence (below {TOTAL_SILENCE_DB:g} dB) "
+                                                f"{where}: a dropout, not a pause (limit {TOTAL_SILENCE_MAX_S:g} s)",
+                         start, end))
+        failed.append((start, end))
+    if not failed:
+        out.append(check("total_silence", PASS, f"no total silence (below {TOTAL_SILENCE_DB:g} dB) longer than "
+                                                f"{TOTAL_SILENCE_MAX_S:g} s"))
+
+    trailing, gaps, holes = [], [], []
+    fade_start = audio_end - MUSIC_FADE_S
+    for start, end in m.get("silences") or []:
+        length = end - start
+        if any(start < f_end and end > f_start for f_start, f_end in failed):
+            continue   # the same gap, already a total_silence FAIL
+        if end >= at_end:
+            if length >= TRAILING_SILENCE_FAIL_S:
+                trailing.append(check("trailing_silence", FAIL,
+                                      f"the last {length:.1f} s are silent (limit {TRAILING_SILENCE_FAIL_S:g} s)",
+                                      start, end))
+            elif length >= SILENCE_GAP_WARN_S:
+                trailing.append(check("trailing_silence", WARN, f"silent tail of {length:.1f} s", start, end))
+        elif music:
+            if start >= fade_start or length < MUSIC_HOLE_WARN_S:
+                continue   # the final fade-out, or a dip too short to hear
+            holes.append([round(start, 3), round(end, 3)])
+            status = FAIL if length >= MUSIC_HOLE_FAIL_S else WARN
+            gaps.append(check("silence_gap", status, f"{length:.1f} s of dead air (below {SILENCE_NOISE_DB:g} dB) in "
+                                                     f"a music-only soundtrack (WARN at {MUSIC_HOLE_WARN_S:g} s, FAIL "
+                                                     f"at {MUSIC_HOLE_FAIL_S:g} s)", start, end))
+        elif length >= SILENCE_GAP_WARN_S:
+            gaps.append(check("silence_gap", WARN, f"{length:.1f} s of silence in the body", start, end))
+
+    end_failed = any(f_end >= at_end for _, f_end in failed)
+    body_failed = any(f_end < at_end for _, f_end in failed)
+    if not trailing:
+        trailing = [check("trailing_silence", INFO, "the silent end is reported under total_silence") if end_failed
+                    else check("trailing_silence", PASS, "sound continues to the end")]
+    if not gaps:
+        if body_failed:
+            gaps = [check("silence_gap", INFO, "the silent gap is reported under total_silence")]
+        elif music:
+            gaps = [check("silence_gap", PASS, f"no dead air of {MUSIC_HOLE_WARN_S:g} s or more in the music")]
+        else:
+            gaps = [check("silence_gap", PASS, f"no silent gap of {SILENCE_GAP_WARN_S:g} s or more")]
+    out += trailing + gaps
+
+    def longest(runs) -> float:
+        return round(max((e - s for s, e in runs), default=0.0), 3)
+
+    summary = {"total_silence_db": TOTAL_SILENCE_DB, "total_silence_limit_s": TOTAL_SILENCE_MAX_S,
+               "dead_air_db": SILENCE_NOISE_DB, "music_only": music,
+               "longest_total_silence_body_s": longest([r for r in totals if not in_tail(r)]),
+               "longest_total_silence_tail_s": longest([r for r in totals if in_tail(r)]),
+               "tail_window_s": tail_s}
+    if music:
+        summary["music_holes"] = holes
+    m["silence_summary"] = summary
     return out
 
 
@@ -921,7 +1031,7 @@ def _check_freshness(m: dict) -> list[dict]:
     stale = m.get("stale_inputs") or []
     if not stale:
         return [check("freshness", PASS, f"{', '.join(inputs)} older than the video")]
-    return [check("freshness", WARN, f"{s['file']} is {s['newer_by_s'] / 3600:.1f} h newer than the video: the render "
+    return [check("freshness", WARN, f"{s['file']} is {fmt_age(s['newer_by_s'])} newer than the video: the render "
                                      "may predate its inputs") for s in stale]
 
 
@@ -930,9 +1040,10 @@ def evaluate(measured: dict, cues: list[dict] | None = None, hook_seconds: float
     """Measurements (and optional subtitle cues and spoken words) -> list of checks. No files, no ffmpeg.
 
     `measured` keys: duration, video_duration, audio_duration, has_video, has_audio, width, height, fps,
-    lufs, true_peak, black, freezes, silences (intervals as [start, end] seconds), and optionally motion
-    (see motion_report), inputs_checked and stale_inputs. Word timings in `words` are in video time. The
-    subtitle-word statistics are written back into measured["subtitle_words"].
+    lufs, true_peak, black, freezes, silences (-50 dB runs), total_silences (-60 dB runs; intervals as
+    [start, end] seconds), and optionally music (True for a music-only soundtrack), motion (see motion_report),
+    inputs_checked and stale_inputs. Word timings in `words` are in video time. The silence and subtitle-word
+    statistics are written back into measured["silence_summary"] and measured["subtitle_words"].
     """
     checks = _check_streams(measured)
     checks += _check_audio(measured)
@@ -989,10 +1100,13 @@ def probe(video: Path) -> dict:
 
 
 def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool = False, motion: bool = False,
-                     video_index: int | None = None, audio_index: int | None = None) -> list[str]:
+                     video_index: int | None = None, audio_index: int | None = None,
+                     music: bool = False) -> list[str]:
     """One decode pass. Black/freeze detection and silence/loudness go to a null output; with `motion` a second
-    branch of the picture goes to stdout as raw 96x54 gray frames at 4 fps."""
+    branch of the picture goes to stdout as raw 96x54 gray frames at 4 fps. Two named silencedetect instances run
+    in the audio chain: total silence (-60 dB) and dead air (-50 dB; shorter minimum with `music`)."""
     fps, width = FAST_SAMPLE if fast else FULL_SAMPLE
+    dead_min = MUSIC_HOLE_WARN_S if music else SILENCE_MIN_S
     vin = f"[0:{video_index}]" if video_index is not None else "[0:v:0]"
     ain = f"[0:{audio_index}]" if audio_index is not None else "[0:a:0]"
     detect = (f"fps={fps},scale={width}:-2,blackdetect=d={BLACK_MIN_S}:pix_th={BLACK_PIX_TH:.2f},"
@@ -1005,7 +1119,8 @@ def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool =
         else:
             graph.append(f"{vin}{detect}[vq]")
     if has_audio:
-        graph.append(f"{ain}silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_S},"
+        graph.append(f"{ain}silencedetect@{SILENCE_TAG_TOTAL}=noise={TOTAL_SILENCE_DB}dB:d={TOTAL_SILENCE_MAX_S:g},"
+                     f"silencedetect@{SILENCE_TAG_DEAD}=noise={SILENCE_NOISE_DB}dB:d={dead_min:g},"
                      "ebur128=peak=true:framelog=quiet[aq]")
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-filter_complex", ";".join(graph)]
     cmd += ["-map", "[vq]"] if has_video else ["-vn"]
@@ -1016,22 +1131,24 @@ def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool =
     return cmd
 
 
-def measure(video: Path, fast: bool = False, hook_seconds: float = DEFAULT_HOOK_S) -> tuple[dict, str | None]:
+def measure(video: Path, fast: bool = False, hook_seconds: float = DEFAULT_HOOK_S,
+            music: bool = False) -> tuple[dict, str | None]:
     """Run ffprobe and one ffmpeg decode pass. Returns (measured, decode_error or None)."""
     info = probe(video)
     measured = dict(info)
-    measured.update({"black": [], "freezes": [], "silences": [], "lufs": None, "true_peak": None, "lra": None,
-                     "fast": fast})
+    measured.update({"black": [], "freezes": [], "silences": [], "total_silences": [], "lufs": None,
+                     "true_peak": None, "lra": None, "fast": fast, "music": music})
     if not info["has_video"] and not info["has_audio"]:
         return measured, None
     cmd = build_decode_cmd(video, info["has_video"], info["has_audio"], fast, motion=info["has_video"],
-                           video_index=info.get("video_index"), audio_index=info.get("audio_index"))
+                           video_index=info.get("video_index"), audio_index=info.get("audio_index"), music=music)
     code, raw, err = _run_bytes(cmd, FFMPEG_TIMEOUT_S)
     video_end = info["video_duration"] or info["duration"]
     audio_end = info["audio_duration"] or info["duration"]
     measured["black"] = parse_blackdetect(err)
     measured["freezes"] = parse_freezedetect(err, video_end)
-    measured["silences"] = parse_silencedetect(err, audio_end)
+    measured["silences"] = parse_silencedetect(err, audio_end, tag=SILENCE_TAG_DEAD)
+    measured["total_silences"] = parse_silencedetect(err, audio_end, tag=SILENCE_TAG_TOTAL)
     loud = parse_loudness(err) if info["has_audio"] else None
     if loud:
         measured.update(loud)
@@ -1120,6 +1237,8 @@ def human_lines(report: dict, report_rel: str) -> list[str]:
     if m.get("has_video"):
         head += f"  {m.get('width')}x{m.get('height')}"
     head += f"  profile {m.get('profile', ANIMATED)}"
+    if m.get("music"):
+        head += "  music-only soundtrack"
     if m.get("fast"):
         head += "  (fast pass)"
     lines = [head]
@@ -1169,13 +1288,17 @@ def parse_band(text: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdout()
     parser = argparse.ArgumentParser(
-        prog=TOOL, description="Code gate for a rendered video: streams, sound to the end, loudness, black and "
-                               "frozen picture, hook motion, subtitle timing against the spoken words. "
+        prog=TOOL, description="Code gate for a rendered video: streams, sound to the end, total silence and "
+                               "dead air, loudness, black and frozen picture, hook motion, subtitle timing "
+                               "against the spoken words. "
                                "Exit 0 pass, 1 fail, 2 usage error.")
     parser.add_argument("video", help="the rendered video file (e.g. render/final.mp4)")
     parser.add_argument("--profile", choices=(ANIMATED, LIVE), default=ANIMATED,
                         help="animated (default): motion graphics and edited explainers; live: camera or screen "
                              "recordings, where hook motion only warns and body freezes warn at 8 s")
+    parser.add_argument("--music", action="store_true",
+                        help="the soundtrack is music only (no narration): dead air below -50 dB warns at "
+                             f"{MUSIC_HOLE_WARN_S:g} s and fails at {MUSIC_HOLE_FAIL_S:g} s")
     parser.add_argument("--srt", help="subtitle file to check against the video")
     parser.add_argument("--words", help="word-timed JSON of the narration (Whisper style); needs --srt")
     parser.add_argument("--words-offset", type=float, default=0.0,
@@ -1216,7 +1339,7 @@ def main(argv: list[str] | None = None) -> int:
             except OSError as exc:
                 raise UsageError(f"cannot read subtitle file: {exc}") from exc
         words = load_words(words_path, args.words_offset) if words_path is not None else None
-        measured, decode_error = measure(video, fast=args.fast, hook_seconds=args.hook_seconds)
+        measured, decode_error = measure(video, fast=args.fast, hook_seconds=args.hook_seconds, music=args.music)
     except UsageError as exc:
         print(f"render_check: error: {exc}", file=sys.stderr)
         return 2

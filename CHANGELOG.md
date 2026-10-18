@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1 - 2026-10-18
+
+- New `transcripts.py` (free, yt-dlp): competitor captions as clean timestamped text, a manifest that skips videos
+  already fetched, language fallback (requested, original, first available), outliers from a saved catalog, and
+  `--first 60` for the evidence video's opening.
+- New `transitions.py`: a review aid that marks one-frame overlay pops and hard screen jumps, with before/after
+  frame pairs for the render-auditor.
+- `render_check.py`: total silence over 1 s below -60 dB fails anywhere; `--music` for music-only soundtracks
+  (dead air warns at 0.5 s, fails at 1 s); the freshness warning says "2 min newer" instead of "0.0 h".
+- `pick_takes.py`: a take whose spectral centre is more than 15% from the narration's median is not usable
+  (`--timbre-drift`, `--no-timbre`), so a cloned voice that drifts to another timbre is caught.
+- `script_lint.py`: duplicate `[[cue]]` anchors fail `--gate`. `facts_check.py`: an unhedged rounded number must
+  stay within 5% of the fact ("0.5%" for 0.45 now needs "about").
+- `upload.py`: login hints name the project folder and never an absolute path; the same for `pulse.py` and
+  `retention.py`.
+- New `costs.md` template: every credit and fee per video, with the total next to the views at T+90.
+- Docs: `morph-clips` detail moved to `reference/authoring.md`; policy claims need the platform's own help page
+  (`fact-checker`); sections link with "but" or "therefore" (`write-script`); say the level of a delegated check
+  (`produce-video`); clearer descriptions for `upload-private` and `localize`.
+
 ## 0.3.0 - 2026-10-18
 
 New skills

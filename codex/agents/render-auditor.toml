@@ -32,6 +32,8 @@ have passed broken renders before: open the frames yourself. Scratch files go to
 4. Text dose: if `qa/text-dose.json` names this file's SHA-256, its verdict is the authority; quote its worst
    slices. If it is missing on a long-form final render, run `text_dose.py` once, or say it was not tested. By
    eye: text cards never run back to back.
+   Transitions: if `qa/transitions.json` exists (from `transitions.py`), open each listed pop or jump at its
+   timestamp; it is a list of places to look, not a verdict.
 5. Audio: the narration and music cover the whole video including the end screen; music fades rather than cuts.
 6. End screen: the last 12-20 s leave text-free space for YouTube's end-screen elements, with no caption hidden
    underneath and no looping animation.

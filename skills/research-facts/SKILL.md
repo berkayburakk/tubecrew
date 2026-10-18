@@ -54,8 +54,9 @@ python $SKILL/scripts/facts_check.py facts.json --script script.md
 ```
 
 Every number in the script must match a fact. A number may be rounded to the precision it is written with
-(12.52 billion as "12.5 billion"); anything looser needs a hedge word ("about", "more than", "up to") in the
-direction that keeps it true. Dates and times are reported, not checked. A `do_not_use` claim in the script fails
+(12.52 billion as "12.5 billion") as long as it stays within 5% of the fact; anything looser needs a hedge word
+("about", "more than", "up to") in the direction that keeps it true. A fact of 0.45 is "about 0.5 percent", never
+a bare "0.5 percent" (11% off). Dates and times are reported, not checked. A `do_not_use` claim in the script fails
 the gate. Exit 1 means fix the script, not the fact file.
 
 ## How numbers are said

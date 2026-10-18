@@ -33,7 +33,9 @@ building captions. Each rule is here because the failure is easy to miss and exp
   the pauses, so everything timed after it stays where it was. If you cannot, re-run alignment and every step
   that depends on word timings.
 - **Separate generation calls can drift in timbre.** A take with perfect words can still sound like a different
-  voice next to its neighbours. Listen across each seam before accepting it.
+  voice next to its neighbours. `pick_takes.py` vetoes a take whose mean spectral centre is more than 15% from
+  the median of the narration already in place (or of the other takes); a smaller drift can still be audible,
+  so listen across each seam before accepting it.
 
 ## TTS input (the text you send to the voice)
 

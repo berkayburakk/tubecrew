@@ -923,15 +923,23 @@ def meta_path_for(token_file: Path) -> Path:
     return token_file.with_suffix(".meta.json")
 
 
-def login_command(profile: str) -> str:
-    """The login command to suggest. Never an absolute path: it can land in reports that get shared."""
-    script = "upload.py"
-    if sys.argv and sys.argv[0].endswith(".py"):
-        try:
-            script = Path(sys.argv[0]).resolve().relative_to(Path.cwd().resolve()).as_posix()
-        except ValueError:
-            script = Path(sys.argv[0]).name
-    return f'python "{script}" --login --profile {profile}'
+def _shown_path(path, fallback: str) -> str:
+    """A path for a suggested command: relative to the current folder when it is inside it, else the bare name."""
+    try:
+        return Path(path).resolve().relative_to(Path.cwd().resolve()).as_posix() or "."
+    except (ValueError, OSError):
+        return Path(path).name or fallback
+
+
+def login_command(profile: str, project: Optional[Path] = None) -> str:
+    """The login command to suggest, with the project folder when known (so the login is checked against its
+    channel_id). Never an absolute path: it can land in reports that get shared."""
+    try:
+        script = Path(__file__).resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        script = Path(__file__).name
+    where = f' "{_shown_path(project, "<project>")}"' if project else ""
+    return f'python "{script}" --login{where} --profile {profile}'
 
 
 def fingerprint(refresh_token) -> Optional[str]:
@@ -1058,13 +1066,13 @@ def describe_token(meta: dict, now: dt.datetime) -> dict:
     return result("PASS", f"{age}; Google reported no expiry", expiry="assumed")
 
 
-def token_check(profile: str, meta: Optional[dict], now: dt.datetime) -> Check:
+def token_check(profile: str, meta: Optional[dict], now: dt.datetime, project: Optional[Path] = None) -> Check:
     """Offline token line for the gate table: is there a login, how old, does it expire soon, which channel did it
     log in to. Reads only the record next to the token, never the token itself."""
     path = token_path(profile)
     if not path.is_file():
         return Check("token", "WARN", f"no upload token for profile '{profile}': log in before --upload "
-                                      f"({login_command(profile)})")
+                                      f"({login_command(profile, project)})")
     record = read_token_meta(meta_path_for(path))
     expected = (meta or {}).get("channel_id") if isinstance(meta, dict) else None
     logged_in = record.get("channel_id")
@@ -1074,7 +1082,7 @@ def token_check(profile: str, meta: Optional[dict], now: dt.datetime) -> Check:
     info = describe_token(record, now)
     detail = f"profile '{profile}': {info['detail']}"
     if info["status"] == "WARN":
-        detail += f"; log in again before uploading: {login_command(profile)}"
+        detail += f"; log in again before uploading: {login_command(profile, project)}"
     return Check("token", info["status"], detail)
 
 
@@ -1478,7 +1486,7 @@ def check_channel_uploads(session, token: str, playlist_id: Optional[str], plan:
 
 def do_upload(plan: Plan, profile: str, say: Out) -> tuple:
     """Network part of --upload; every local gate already passed. Returns (exit code, result dict)."""
-    meta, login_cmd = plan.meta, login_command(profile)
+    meta, login_cmd = plan.meta, login_command(profile, plan.project)
     cred = load_upload_credentials(token_path(profile), login_cmd)
     session = new_session()
     try:
@@ -1745,7 +1753,7 @@ def do_check_token(profile: str, say: Out, expected: Optional[str] = None) -> tu
 def run(project: Path, video: Optional[Path], a, skip: Optional[str], say: Out) -> tuple:
     """Gate table, then the dry-run result or the upload. Returns (exit code, result dict)."""
     plan = build_plan(project, video, a.upload, skip, a.again, a.schedule)
-    plan.checks.append(token_check(a.profile, plan.meta, utcnow()))
+    plan.checks.append(token_check(a.profile, plan.meta, utcnow(), plan.project))
     lock = project / "qa" / LOCK_NAME
     info = None if a.upload else read_lock(lock)
     if info is not None:

@@ -267,6 +267,43 @@ def test_fact_more_precise_than_script_only_when_it_rounds():
     assert _status("Revenue was 12.52 billion.", facts)[0][1] == "unsourced"
 
 
+def _fact(value, unit):
+    return {"value": value, "unit": unit, "type": "primary", "source": "Example report",
+            "url": "https://example.com/report", "accessed": "2026-03-01"}
+
+
+def test_rounding_more_than_five_percent_away_needs_a_hedge():
+    facts = {"fee": _fact(0.45, "%")}
+    assert _status("a fee of 0.45%", facts)[0][1] == "sourced"
+    assert _status("a fee of 0.5%", facts)[0][1] == "unsourced"           # rounds to 0.5 but is 11 % off
+    assert _status("a fee of about 0.5%", facts)[0] == ("about 0.5%", "sourced", "fee")
+    assert _status("a fee of around 0.5 percent", facts)[0][1] == "sourced"
+    assert _status("a fee of nearly 0.5%", facts)[0][1] == "sourced"      # 0.45 is below 0.5: true
+    assert _status("a fee of under 0.5%", facts)[0][1] == "sourced"
+    assert _status("a fee of about 0.4%", facts)[0][1] == "unsourced"     # 0.45 does not round to 0.4
+    _, findings = _check("a fee of 0.5%", facts)
+    assert "rounded, but more than 5% away" in findings[0]["message"] and "about" in findings[0]["message"]
+
+
+def test_rounded_down_number_needs_a_hedge_that_points_up():
+    facts = {"fee": _fact(0.54, "%")}
+    assert _status("a fee of 0.5%", facts)[0][1] == "unsourced"           # 7.4 % off
+    assert _status("a fee of about 0.5%", facts)[0][1] == "sourced"
+    assert _status("a fee of more than 0.5%", facts)[0][1] == "sourced"
+    assert _status("a fee of nearly 0.5%", facts)[0][1] == "unsourced"    # "nearly" says below 0.5; it is above
+    _, findings = _check("a fee of nearly 0.5%", facts)
+    assert "says the fact is below this number" in findings[0]["message"]
+
+
+def test_hedged_rounding_has_a_ceiling():
+    facts = {"deal": _fact(1.45, "billion $")}
+    assert _status("a $1.5 billion deal", facts)[0][1] == "sourced"       # 3.4 % off: precision is enough
+    assert _status("about $1 billion", facts)[0][1] == "unsourced"        # rounds to 1 but is 31 % off
+    _, findings = _check("about $1 billion", facts)
+    assert "write one more digit" in findings[0]["message"]
+    assert _status("more than $1 billion", facts)[0][1] == "sourced"      # a bound is still true
+
+
 def test_hedge_about():
     assert _status("about 3,000 employees")[0][1] == "sourced"       # 1.3 % off
     assert _status("roughly 12 billion dollars")[0][1] == "unsourced"  # 4.2 % off

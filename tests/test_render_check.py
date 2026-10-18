@@ -93,6 +93,24 @@ def test_parse_silencedetect_closes_open_silence_at_duration():
     assert rc.parse_silencedetect(SILENCE_STDERR, 60.0) == [[10.5, 12.8], [57.014, 60.0]]
 
 
+# Two named detectors share one log. Recent ffmpeg prints "silencedetect@name", older builds only "name".
+TWO_DETECTORS_STDERR = """
+[silencedetect@tc_dead @ 000001a] silence_start: 3.9
+[silencedetect@tc_total @ 000001b] silence_start: 4.02
+[silencedetect@tc_total @ 000001b] silence_end: 5.5 | silence_duration: 1.48
+[silencedetect@tc_dead @ 000001a] silence_end: 5.6 | silence_duration: 1.7
+[tc_dead @ 0x5] silence_start: 58.0
+[tc_total @ 0x6] silence_start: 58.9
+"""
+
+
+def test_parse_silencedetect_separates_the_two_named_detectors():
+    total = rc.parse_silencedetect(TWO_DETECTORS_STDERR, 60.0, tag=rc.SILENCE_TAG_TOTAL)
+    dead = rc.parse_silencedetect(TWO_DETECTORS_STDERR, 60.0, tag=rc.SILENCE_TAG_DEAD)
+    assert total == [[4.02, 5.5], [58.9, 60.0]]
+    assert dead == [[3.9, 5.6], [58.0, 60.0]]
+
+
 def test_parse_loudness_ebur128_reads_summary_not_running_lines():
     loud = rc.parse_loudness(EBUR128_STDERR)
     assert loud == {"lufs": -14.2, "true_peak": -0.4, "lra": 3.1}
@@ -177,10 +195,14 @@ def test_fmt_time_and_project_detection(tmp_path):
 def test_decode_command_full_and_fast():
     full = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, True))
     assert "fps=5,scale=320:-2" in full and "blackdetect=d=0.3:pix_th=0.10" in full
-    assert "freezedetect=n=0.003:d=2" in full and "silencedetect=noise=-50dB:d=1.5" in full
+    assert "freezedetect=n=0.003:d=2" in full
+    assert "silencedetect@tc_total=noise=-60dB:d=1," in full          # total silence
+    assert "silencedetect@tc_dead=noise=-50dB:d=1.5," in full         # dead air; shorter pauses are speech rhythm
     assert "ebur128=peak=true" in full
     fast = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, False, fast=True))
     assert "fps=2,scale=160:-2" in fast and "-an" in fast
+    music = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, True, music=True))
+    assert "silencedetect@tc_dead=noise=-50dB:d=0.5," in music        # music-only: half a second is a hole
 
 
 def test_decode_command_motion_branch_goes_to_stdout_at_the_calibrated_sampling():
@@ -230,6 +252,60 @@ def test_trailing_silence_and_gaps():
     checks = rc.evaluate(measured(silences=[[30.0, 32.2], [50.0, 51.6]]))
     assert statuses(checks, "silence_gap") == ["WARN"]
     assert rc.verdict_of(checks) == "PASS"
+
+
+def test_total_silence_over_one_second_fails_in_the_body_and_at_the_end():
+    body = rc.evaluate(measured(total_silences=[[30.0, 31.5]], silences=[[29.8, 31.7]]))
+    fails = [c for c in body if c["name"] == "total_silence"]
+    assert [c["status"] for c in fails] == ["FAIL"] and "in the body" in fails[0]["detail"]
+    assert (fails[0]["start"], fails[0]["end"]) == (30.0, 31.5)
+    assert statuses(body, "silence_gap") == ["INFO"]          # the same gap is not reported twice
+    end = rc.evaluate(measured(total_silences=[[118.6, 120.0]], silences=[[118.4, 120.0]]))
+    assert [c["detail"] for c in end if c["name"] == "total_silence" and "at the end" in c["detail"]]
+    assert statuses(end, "trailing_silence") == ["INFO"] and rc.verdict_of(end) == "FAIL"
+    tail = rc.evaluate(measured(total_silences=[[105.0, 106.2]]))
+    assert "in the tail (last 25 s)" in [c for c in tail if c["name"] == "total_silence"][0]["detail"]
+
+
+def test_total_silence_of_one_second_or_less_passes():
+    checks = rc.evaluate(measured(total_silences=[[60.0, 61.0]]))
+    assert statuses(checks, "total_silence") == ["PASS"] and rc.verdict_of(checks) == "PASS"
+
+
+def test_dead_air_checks_still_run_where_total_silence_does_not_reach():
+    # a 3.5 s near-silent tail with under a second of total silence inside: the -50 dB rule still fails it
+    checks = rc.evaluate(measured(total_silences=[[119.2, 120.0]], silences=[[116.5, 120.0]]))
+    assert statuses(checks, "total_silence") == ["PASS"]
+    assert statuses(checks, "trailing_silence") == ["FAIL"]
+
+
+def test_silence_summary_is_written_back():
+    m = measured(total_silences=[[30.0, 31.5], [118.0, 120.0]], silences=[[29.9, 31.6], [117.9, 120.0]])
+    rc.evaluate(m)
+    summary = m["silence_summary"]
+    assert summary["total_silence_db"] == -60 and summary["dead_air_db"] == -50
+    assert summary["longest_total_silence_body_s"] == 1.5 and summary["longest_total_silence_tail_s"] == 2.0
+    assert summary["music_only"] is False and "music_holes" not in summary
+
+
+def test_short_video_keeps_a_body_for_the_labels():
+    checks = rc.evaluate(measured(duration=10.0, video_duration=10.0, audio_duration=10.0,
+                                  total_silences=[[4.0, 5.5]]))
+    assert "in the body" in [c for c in checks if c["name"] == "total_silence"][0]["detail"]
+
+
+def test_music_only_soundtrack_holes():
+    def gap(silences, music=True):
+        m = measured(music=music, silences=silences)
+        return statuses(rc.evaluate(m), "silence_gap"), m["silence_summary"]
+
+    status, summary = gap([[40.0, 40.7]])
+    assert status == ["WARN"] and summary["music_only"] is True and summary["music_holes"] == [[40.0, 40.7]]
+    assert gap([[40.0, 41.2]])[0] == ["FAIL"]
+    assert gap([[40.0, 40.3]])[0] == ["PASS"]                   # too short to hear
+    assert gap([[117.5, 118.4]])[0] == ["PASS"]                 # inside the final 3 s fade
+    assert gap([[40.0, 40.7]], music=False)[0] == ["PASS"]      # speech rhythm without --music
+    assert rc.verdict_of(rc.evaluate(measured(music=True, silences=[[40.0, 41.2]]))) == "FAIL"
 
 
 @pytest.mark.parametrize("lufs,expected", [(-14.0, "PASS"), (-16.0, "PASS"), (-17.0, "WARN"), (-11.0, "WARN"),
@@ -304,15 +380,16 @@ def test_subtitle_checks():
 
 # ------------------------------------------------------------------------------------------- end to end (ffmpeg)
 
-def make_clip(path, seconds=10, vf=None, audio_seconds=None):
-    """A small moving test pattern with a 440 Hz tone set to about -15 LUFS."""
+def make_clip(path, seconds=10, vf=None, audio_seconds=None, af=None):
+    """A small moving test pattern with a 440 Hz tone set to about -15 LUFS (`af` is appended to the tone)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
            "-f", "lavfi", "-i", f"testsrc2=size=160x90:rate=10:d={seconds}",
            "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=44100:d={audio_seconds or seconds}"]
     if vf:
         cmd += ["-vf", vf]
-    cmd += ["-af", "volume=7dB", "-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac", "-b:a", "96k", str(path)]
+    cmd += ["-af", "volume=7dB" + (f",{af}" if af else ""), "-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac", "-b:a", "96k",
+            str(path)]
     subprocess.run(cmd, check=True, capture_output=True)
     return path
 
@@ -407,6 +484,37 @@ def test_e2e_short_audio_in_matroska_fails(tmp_path, capsys):
     report = report_of(tmp_path / "qa" / "render-check.json")
     assert statuses(report["checks"], "audio_length") == ["FAIL"]
     assert code == 1
+
+
+@needs_ffmpeg
+def test_e2e_digital_silence_hole_in_the_body_fails(tmp_path, capsys):
+    # 1.5 s of digital silence: under the 2 s dead-air warning, so only the -60 dB total-silence rule catches it
+    clip = make_clip(tmp_path / "hole.mp4", seconds=12, af="volume=0:enable='between(t,4,5.5)'")
+    code, out = run_main(capsys, clip)
+    report = report_of(tmp_path / "qa" / "render-check.json")
+    total = [c for c in report["checks"] if c["name"] == "total_silence"]
+    assert [c["status"] for c in total] == ["FAIL"] and "in the body" in total[0]["detail"]
+    assert 3.8 <= total[0]["start"] <= 4.2 and 1.3 <= total[0]["end"] - total[0]["start"] <= 1.7
+    assert "FAIL" not in statuses(report["checks"], "silence_gap")
+    assert 1.3 <= report["measured"]["silence_summary"]["longest_total_silence_body_s"] <= 1.7
+    assert report["measured"]["total_silences"]
+    assert report["verdict"] == "FAIL" and code == 1 and "total_silence" in out
+
+
+@needs_ffmpeg
+def test_e2e_music_only_hole_warns_only_with_music(tmp_path, capsys):
+    clip = make_clip(tmp_path / "music.mp4", seconds=12, af="volume=0:enable='between(t,4,4.7)'")
+    code, _ = run_main(capsys, clip, "--out", tmp_path / "speech.json")
+    speech = report_of(tmp_path / "speech.json")
+    assert statuses(speech["checks"], "silence_gap") == ["PASS"]        # a 0.7 s pause is speech rhythm
+    assert statuses(speech["checks"], "total_silence") == ["PASS"]
+    code, out = run_main(capsys, clip, "--music", "--out", tmp_path / "music.json")
+    report = report_of(tmp_path / "music.json")
+    gap = [c for c in report["checks"] if c["name"] == "silence_gap"]
+    assert [c["status"] for c in gap] == ["WARN"] and 3.8 <= gap[0]["start"] <= 4.2
+    assert report["measured"]["music"] is True
+    assert len(report["measured"]["silence_summary"]["music_holes"]) == 1
+    assert report["verdict"] == "PASS" and code == 0 and "music-only soundtrack" in out
 
 
 @needs_ffmpeg
@@ -625,6 +733,15 @@ def test_freshness_check():
     stale = rc._check_freshness(measured(inputs_checked=["voice/captions.srt"],
                                          stale_inputs=[{"file": "voice/captions.srt", "newer_by_s": 7200.0}]))
     assert [c["status"] for c in stale] == ["WARN"] and "2.0 h newer" in stale[0]["detail"]
+    minutes = rc._check_freshness(measured(inputs_checked=["voice/captions.srt"],
+                                           stale_inputs=[{"file": "voice/captions.srt", "newer_by_s": 125.0}]))
+    assert "2 min newer" in minutes[0]["detail"] and "0.0 h" not in minutes[0]["detail"]
+
+
+@pytest.mark.parametrize("seconds,text", [(3.0, "3 s"), (59.4, "59 s"), (125.0, "2 min"), (359.0, "6 min"),
+                                          (360.0, "0.1 h"), (7200.0, "2.0 h")])
+def test_fmt_age_never_says_zero_hours(seconds, text):
+    assert rc.fmt_age(seconds) == text
 
 
 def test_words_without_srt_is_a_usage_error(tmp_path, capsys):

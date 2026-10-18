@@ -1,6 +1,6 @@
 ---
 name: localize
-description: Translate and dub a finished video into other languages - a meaning-first translation that keeps every number from facts.json, a native-listener audit, the creator's dubbing voice, a back-transcription check and a timing check that each dubbed paragraph fits the original picture. Use for "dub this video", "translate the narration", "make a Spanish version" or "add audio tracks in other languages".
+description: Translate and dub a finished video into other languages - a meaning-first translation that keeps every number from facts.json, a naturalness audit (a native listener, or one clearly labelled model-only), the creator's dubbing voice, a back-transcription check and a timing check that each dubbed paragraph fits the original picture. Use for "dub this video", "translate the narration", "make a Spanish version" or "add audio tracks in other languages".
 ---
 
 # Localize a video
@@ -17,6 +17,7 @@ change to the source means re-translating and re-voicing every changed paragraph
 dub/<lang>/script.md       translation, same paragraph ids (P01, P02, ...) as script.md
 dub/<lang>/tts.md          the text sent to the voice engine (numbers spelled out), if it differs
 dub/<lang>/voice/P01.wav   one audio file per paragraph, named by its id
+dub/<lang>/narration.wav   the paragraphs joined into one track (for the voice check and YouTube Studio)
 dub/<lang>/captions.srt    captions timed to the dub
 qa/voice-check-<lang>.json, qa/dub-fit-<lang>.json
 upload.json                "localizations": {"<lang>": {"title": ..., "description": ...}}

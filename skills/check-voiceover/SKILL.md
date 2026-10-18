@@ -47,8 +47,10 @@ line is a paragraph, and all three scripts here number paragraphs the same way.
    python $SKILL/scripts/pick_takes.py script.md voice/candidates --apply voice/paragraphs
    ```
    Takes are ranked by word fidelity; a take only counts when every number and name of the paragraph is heard
-   exactly and its pace is plausible. Exit 1 names the paragraphs with no usable take: back to step 3. Three
-   rounds is normal. If one name fails in every take, change the TTS input instead of adding takes.
+   exactly and its pace is plausible. With ffmpeg on PATH, a take whose timbre (spectral centre) is more than
+   15% from the rest of the narration is vetoed too (`--timbre-drift PCT`, `--no-timbre`). Exit 1 names the
+   paragraphs with no usable take: back to step 3. Three rounds is normal. If one name fails in every take,
+   change the TTS input instead of adding takes.
 5. Join again, then shorten long pauses (speech is never stretched; a new file is written):
    ```bash
    python $SKILL/scripts/trim_silence.py voice/narration.wav --measure

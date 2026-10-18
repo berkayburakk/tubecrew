@@ -1,6 +1,12 @@
-"""Tests for skills/check-voiceover/scripts/pick_takes.py (precomputed transcripts; no audio, no faster-whisper)."""
+"""Tests for skills/check-voiceover/scripts/pick_takes.py (precomputed transcripts; no faster-whisper).
+
+Most takes are fake audio bytes, which the timbre veto must skip with a note. The timbre tests build short sine
+tones with ffmpeg's lavfi source and skip when ffmpeg is not installed.
+"""
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -19,10 +25,13 @@ def _load():
 
 
 pt = _load()
+HAS_FFMPEG = bool(shutil.which("ffmpeg"))
+needs_ffmpeg = pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 
 P1 = "Last year the company made 12.5 billion dollars in profit."
 P2 = "Most of it came from chips that nobody outside the industry had heard of."
 P3 = "Then a small rival in Ohio changed the plan for everyone."
+P4 = "The plan worked better than anyone expected."
 SCRIPT_MD = f"# Story\n\n{P1}\n\n> note: not spoken\n\n{P2}\n\n{P3}\n"
 
 
@@ -241,3 +250,91 @@ def test_usage_errors(project, capsys):
     empty.mkdir()
     code, err = run(capsys, project / "script.md", empty)
     assert code == 2 and "no paragraph folders" in err.err
+    code, err = run(capsys, project / "script.md", project / "voice" / "candidates", "--timbre-drift", "0")
+    assert code == 2 and "--timbre-drift" in err.err
+
+
+# ------------------------------------------------------------------------------------------- timbre
+
+def tone(path, frequency, seconds=1.5):
+    """A short sine tone (a stand-in for a voice whose spectral centre sits at `frequency`)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    f"sine=frequency={frequency}:duration={seconds}:sample_rate=24000", str(path)], check=True)
+    return path
+
+
+def test_metadata_parsing_skips_pauses_and_needs_voiced_frames():
+    def frame(k, mean, centroid):
+        return (f"frame:{k}    pts:{k * 1024}    pts_time:{k * 0.04}\n"
+                f"lavfi.aspectralstats.1.mean={mean}\nlavfi.aspectralstats.1.centroid={centroid}\n")
+
+    voiced = "".join(frame(k, 0.5, 1000 + 10 * k) for k in range(3))
+    pauses = frame(3, 0.0, 1) + frame(4, 0.001, 4000) + frame(5, 0.2, "nan")
+    assert pt.centre_from_metadata(voiced + pauses) == pytest.approx(1010.0)
+    assert pt.centre_from_metadata(frame(0, 0.5, 900) + frame(1, 0.5, 1100)) is None   # too few frames
+    assert pt.centre_from_metadata(frame(0, 0, 1) * 5) is None                          # silence
+    assert pt.centre_from_metadata("") is None
+
+
+def test_fake_audio_skips_the_veto_with_a_note(project, capsys):
+    code, out = run(capsys, project / "script.md", project / "voice" / "candidates")
+    timbre = report_of(project)["timbre"]
+    assert code == 1 and timbre["enabled"] and timbre["reference_hz"] is None and timbre["vetoed"] == 0
+    assert "skipped" in timbre["note"] and "timbre: not checked" in out.out
+    assert report_of(project)["paragraphs"][0]["best"] == "voice/candidates/1/seed-b.wav"   # nothing vetoed
+
+
+def test_drift_threshold_is_configurable(tmp_path, capsys, monkeypatch):
+    centres = {"a": 1000.0, "b": 1050.0, "c": 1100.0, "d": 1300.0}   # median 1075; d is 21% brighter
+    monkeypatch.setattr(pt, "_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pt, "spectral_centre", lambda path, ffmpeg="ffmpeg": centres[Path(path).stem])
+    (tmp_path / "script.md").write_text(SCRIPT_MD, encoding="utf-8")
+    for name in centres:
+        add_take(tmp_path / "candidates" / "2", name, P2)
+    assert run(capsys, tmp_path / "script.md", tmp_path / "candidates")[0] == 0
+    report = report_of(tmp_path)
+    takes = {Path(t["take"]).stem: t for t in report["paragraphs"][0]["takes"]}
+    assert report["timbre"]["reference_hz"] == 1075.0 and report["timbre"]["vetoed"] == 1
+    assert not takes["d"]["usable"] and "timbre drift +21%" in takes["d"]["rejected"]
+    assert takes["d"]["timbre_drift_pct"] == 20.9 and takes["a"]["usable"]
+    run(capsys, tmp_path / "script.md", tmp_path / "candidates", "--timbre-drift", "25")
+    assert report_of(tmp_path)["timbre"]["vetoed"] == 0
+
+
+@needs_ffmpeg
+def test_a_much_brighter_take_is_vetoed(tmp_path, capsys):
+    (tmp_path / "script.md").write_text(SCRIPT_MD, encoding="utf-8")
+    cand = tmp_path / "voice" / "candidates"
+    # Same words and pace in every take, so without the veto the first name in sort order wins the tie.
+    for name, frequency in (("a-bright", 3200), ("b-steady", 300), ("c-steady", 330)):
+        add_take(cand / "1", name, P1, audio=tone(cand / "1" / f"{name}.wav", frequency).read_bytes())
+    for name, frequency in (("d-steady", 310), ("e-steady", 320)):
+        add_take(cand / "2", name, P2, audio=tone(cand / "2" / f"{name}.wav", frequency).read_bytes())
+    code, out = run(capsys, tmp_path / "script.md", cand)
+    report = report_of(tmp_path)
+    p1 = report["paragraphs"][0]
+    bright = next(t for t in p1["takes"] if t["take"].endswith("a-bright.wav"))
+    assert code == 0 and Path(p1["best"]).name == "b-steady.wav"
+    assert not bright["usable"] and "timbre drift" in bright["rejected"] and bright["timbre_drift_pct"] > 100
+    assert report["timbre"]["reference"] == "median of 5 take(s) in this run" and report["timbre"]["vetoed"] == 1
+    assert 280 < report["timbre"]["reference_hz"] < 360 and "timbre: reference" in out.out
+    code, _ = run(capsys, tmp_path / "script.md", cand, "--no-timbre")
+    assert code == 0 and Path(report_of(tmp_path)["paragraphs"][0]["best"]).name == "a-bright.wav"
+    assert report_of(tmp_path)["timbre"] == {"enabled": False, "max_drift_pct": 15.0}
+
+
+@needs_ffmpeg
+def test_narration_already_in_place_is_the_reference(tmp_path, capsys):
+    (tmp_path / "script.md").write_text(f"{P1}\n\n{P2}\n\n{P3}\n\n{P4}\n", encoding="utf-8")
+    narration = tmp_path / "voice" / "paragraphs"
+    for number in (1, 2, 3, 4):   # p001 is being re-picked, so it is not part of the reference
+        tone(narration / f"p{number:03d}.wav", 300 if number == 1 else 2000)
+    cand = tmp_path / "voice" / "candidates"
+    add_take(cand / "1", "a-dark", P1, audio=tone(cand / "1" / "a-dark.wav", 300).read_bytes())
+    add_take(cand / "1", "b-match", P1, audio=tone(cand / "1" / "b-match.wav", 2100).read_bytes())
+    code, _ = run(capsys, tmp_path / "script.md", cand)
+    report = report_of(tmp_path)
+    assert code == 0 and Path(report["paragraphs"][0]["best"]).name == "b-match.wav"
+    assert report["timbre"]["reference"] == "median of 3 paragraph(s) in voice/paragraphs"
+    assert 1900 < report["timbre"]["reference_hz"] < 2100

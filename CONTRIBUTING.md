@@ -33,7 +33,8 @@ tests/test_<script>.py           pytest, one file per script
 
 ## The video project contract
 
-Every skill and agent assumes one folder per video:
+Every skill and agent assumes one folder per video. Gates that other gates depend on write into `qa/`;
+`facts_check.py` and `script_lint.py` print to the terminal unless given `--out`:
 
 ```
 <video>/
@@ -46,6 +47,7 @@ Every skill and agent assumes one folder per video:
   render/<name>.mp4    the final render
   upload.json          title, description, tags, flags         (upload-private)
   preflight.md         lessons that apply to this video        (produce-video)
+  costs.md             credits and fees spent on this video    (produce-video)
   qa/                  every gate result lives here
     SCRIPT-AB-<YYYY-MM-DD>.md          script-auditor (saved by the caller)
     voice-check.json                   voice_check.py (+ voice-check-transcript.json with word timings)
@@ -56,6 +58,8 @@ Every skill and agent assumes one folder per video:
     text-dose.json                     text_dose.py
     normalize-audio.json               normalize_audio.py
     RENDER-AUDIT-<YYYY-MM-DD>.md       render-auditor (saved by the caller)
+    FACT-CHECK-codex-<YYYY-MM-DD>.md   optional Codex cross-check (setup's tools.md)
+    transitions.json                   transitions.py (review aid, not a gate)
     thumbnail-check.json               thumb_check.py (+ thumbnail-preview.png)
     UPLOAD-GATE-<YYYY-MM-DD>.md        upload-checker
     upload-log.json                    upload.py, after a real upload

@@ -5,16 +5,18 @@ What it does
     For every paragraph that has candidate takes, reads the transcript saved next to each take (or transcribes
     the take with faster-whisper), aligns it word by word with that paragraph of the script and ranks the takes
     by fidelity. A take only counts when every number and every capitalised name of the paragraph is heard
-    exactly, its pace is plausible, and its fidelity reaches --min-fidelity. Prints a table, writes
-    qa/take-pick.json, and with --apply copies the winner of each paragraph into the folder the narration is
-    assembled from.
+    exactly, its pace is plausible, its fidelity reaches --min-fidelity and its timbre has not drifted away from
+    the rest of the narration. Prints a table, writes qa/take-pick.json, and with --apply copies the winner of
+    each paragraph into the folder the narration is assembled from.
 
 Why
     Generated voices fail per paragraph, and not the same way every time: a repeated phrase, an invented
     sentence, a garbled name, a wrong number. Duration does not show it; a take can be the right length and
     still say the wrong thing. Picking by ear across a dozen takes is slow; a word-level score is exact.
     Regenerate only the failing paragraphs, with new seeds (a fixed seed repeats the same mistake); three
-    rounds is normal.
+    rounds is normal. Each paragraph is a separate generation call, and a cloned voice can come back brighter
+    or darker than its neighbours: word-perfect, yet heard as a different voice at the seam. A transcript
+    cannot show that; the spectral centre can.
 
 How to run
     python pick_takes.py script.md --list                          numbered paragraphs (the folder numbers)
@@ -39,12 +41,19 @@ Rules for a usable take
       is capitalised mid-sentence somewhere in the script); --waive TEXT accepts one you listened to
     - pace inside --wpm-fail-band (when the transcript has word timings)
     - fidelity (difflib ratio over voice_check's normalized words, autojunk off) at or above --min-fidelity
+    - timbre: the take's mean spectral centre (ffmpeg aspectralstats over its voiced frames) within
+      --timbre-drift percent (default 15) of the reference. The reference is the median of the narration already
+      in the --apply folder (or voice/paragraphs next to the script), leaving out the paragraphs being picked;
+      with fewer than 3 measurable files there, the median of every take in this run. Takes ffmpeg cannot read
+      are not vetoed, and the report says so; without ffmpeg the veto is skipped with a note. --no-timbre
+      turns it off.
     Ties within 0.005 fidelity go to the take whose pace is closest to the middle of --wpm-band.
 
 Exit codes
     0  every paragraph looked at has a usable take     1  at least one has none     2  usage or environment error
 
-Standard library only; faster-whisper is optional and imported only when a take has no transcript.
+Standard library only; faster-whisper is optional and imported only when a take has no transcript. The timbre
+veto uses ffmpeg when it is on PATH (aspectralstats needs ffmpeg 5.1 or newer).
 """
 from __future__ import annotations
 
@@ -53,18 +62,31 @@ import datetime as dt
 import difflib
 import importlib.util
 import json
+import math
 import re
 import shutil
+import statistics
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
 
 TOOL = "pick_takes.py"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 MIN_FIDELITY = 0.95        # under this a take is worth regenerating; clean takes of a paragraph score 0.95-1.0
 TIE_MARGIN = 0.005         # takes this close in fidelity are a tie (about half a word in a 100-word paragraph)
 MAX_DIFFERENCES = 3        # largest differences listed per take
+# Timbre veto. Paragraphs of one cloned voice spread by a few percent around their median spectral centre (the
+# text itself moves it a little); a take about 15% off sits two spreads out and is heard as a different voice
+# next to its neighbours, even when every word is right.
+TIMBRE_MAX_DRIFT = 15.0    # percent from the reference centre
+TIMBRE_MIN_REFERENCE = 3   # with fewer measured files a median cannot tell which one drifted
+TIMBRE_RATE = 24000        # everything is measured at one rate, so a 44.1 kHz file compares with a 24 kHz one
+TIMBRE_WINDOW = 2048       # FFT window: 85 ms at 24 kHz, several pitch periods yet shorter than a syllable
+TIMBRE_GATE = 0.01         # frames 40 dB under the loudest one are pauses; their centre is noise, not voice
+TIMBRE_MIN_FRAMES = 3      # fewer voiced frames than this is not a measurement
+FFMPEG_TIMEOUT_S = 600     # one decode of one take; a paragraph decodes in well under a second
 TRANSCRIPT_SUFFIXES = (".json", ".srt", ".vtt", ".txt")
 REPLACED_DIR = "replaced"
 _FOLDER_RE = re.compile(r"[pP]?0*(\d+)")
@@ -270,6 +292,114 @@ def rank(takes: list[dict], warn_band) -> list[dict]:
     return ordered
 
 
+# ----------------------------------------------------------------------------------------------- timbre
+
+def _ffmpeg() -> str | None:
+    return shutil.which("ffmpeg")
+
+
+def centre_from_metadata(text: str) -> float | None:
+    """ametadata print output of aspectralstats -> mean centroid (Hz) of the voiced frames, or None."""
+    frames: list[dict] = []
+    current: dict = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("frame:"):
+            if current:
+                frames.append(current)
+            current = {}
+            continue
+        key, sep, value = line.partition("=")
+        name = key.rsplit(".", 1)[-1]
+        if sep and key.startswith("lavfi.aspectralstats.") and name in ("centroid", "mean"):
+            try:
+                current[name] = float(value)
+            except ValueError:
+                pass
+    if current:
+        frames.append(current)
+    has_level = any("mean" in f for f in frames)
+    loudest = max((f["mean"] for f in frames if math.isfinite(f.get("mean", math.nan))), default=0.0)
+    if has_level and loudest <= 0:
+        return None  # silence
+    voiced = [f["centroid"] for f in frames
+              if math.isfinite(f.get("centroid", math.nan)) and f["centroid"] > 0
+              and (not has_level or f.get("mean", 0.0) >= loudest * TIMBRE_GATE)]
+    return sum(voiced) / len(voiced) if len(voiced) >= TIMBRE_MIN_FRAMES else None
+
+
+def spectral_centre(path: Path, ffmpeg: str = "ffmpeg") -> float | None:
+    """Mean spectral centroid (Hz) of the voiced frames of an audio file, or None when ffmpeg cannot read it."""
+    chain = (f"aresample={TIMBRE_RATE},aformat=channel_layouts=mono,"
+             f"aspectralstats=win_size={TIMBRE_WINDOW},ametadata=mode=print:file=-")
+    cmd = [ffmpeg, "-hide_banner", "-nostats", "-nostdin", "-loglevel", "error", "-i", str(path),
+           "-map", "0:a:0", "-af", chain, "-f", "null", "-"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=FFMPEG_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return centre_from_metadata(proc.stdout) if proc.returncode == 0 else None
+
+
+def narration_files(folder: Path | None, skip: set[int]) -> list[Path]:
+    """The p<NNN>.<ext> files of the assembled narration, minus the paragraphs being picked now."""
+    if folder is None or not folder.is_dir():
+        return []
+    out = []
+    for path in sorted(folder.iterdir()):
+        m = re.fullmatch(r"[pP](\d+)", path.stem)
+        if path.is_file() and m and path.suffix.lower() in vc.AUDIO_EXTENSIONS and int(m.group(1)) not in skip:
+            out.append(path)
+    return out
+
+
+def timbre_veto(takes: list[dict], max_drift: float, narration: Path | None, skip: set[int], base: Path) -> dict:
+    """Measure each take's spectral centre and mark a take that drifted more than max_drift percent from the
+    reference as not usable. Takes that cannot be measured are left alone; the result says how many."""
+    info = {"enabled": True, "max_drift_pct": max_drift, "reference_hz": None, "reference": None,
+            "measured": 0, "unmeasured": len(takes), "vetoed": 0, "note": None}
+    for take in takes:
+        take["centroid_hz"] = take["timbre_drift_pct"] = None
+    ffmpeg = _ffmpeg()
+    if ffmpeg is None:
+        info["note"] = "ffmpeg not found on PATH; timbre veto skipped"
+        return info
+    centres = {}
+    for k, take in enumerate(takes):
+        centre = spectral_centre(take["path"], ffmpeg)
+        if centre is not None:
+            centres[k] = centre
+            take["centroid_hz"] = round(centre, 1)
+    info["measured"], info["unmeasured"] = len(centres), len(takes) - len(centres)
+    if not centres:
+        info["note"] = "no take could be measured (unreadable, fake or silent audio); timbre veto skipped"
+        return info
+    files = narration_files(narration, skip)
+    reference = [c for c in (spectral_centre(p, ffmpeg) for p in files) if c is not None]
+    if len(reference) >= TIMBRE_MIN_REFERENCE:
+        info["reference"] = f"median of {len(reference)} paragraph(s) in {vc.rel_path(narration, base)}"
+    else:
+        reference = list(centres.values())
+        if len(reference) < TIMBRE_MIN_REFERENCE:
+            info["note"] = (f"only {len(reference)} take(s) could be measured and no narration to compare with; "
+                            f"timbre veto skipped (it needs {TIMBRE_MIN_REFERENCE})")
+            return info
+        info["reference"] = f"median of {len(reference)} take(s) in this run"
+    ref = statistics.median(reference)
+    info["reference_hz"] = round(ref, 1)
+    for k, centre in centres.items():
+        take = takes[k]
+        drift = (centre - ref) / ref * 100.0
+        take["timbre_drift_pct"] = round(drift, 1)
+        if abs(drift) > max_drift:
+            reason = f"timbre drift {drift:+.0f}% (centre {centre:.0f} Hz, reference {ref:.0f} Hz)"
+            take["rejected"] = "; ".join(r for r in (take["rejected"], reason) if r)
+            take["usable"] = False
+            info["vetoed"] += 1
+    return info
+
+
 # ----------------------------------------------------------------------------------------------- apply
 
 def apply_winner(take: Path, number: int, dest: Path) -> dict:
@@ -302,6 +432,16 @@ def human_lines(report: dict, report_rel: str) -> list[str]:
     rows = report["paragraphs"]
     lines = [f"pick_takes: {report['script']}, {len(rows)} paragraph(s), "
              f"{sum(len(r['takes']) for r in rows)} take(s), min fidelity {report['min_fidelity']:g}"]
+    timbre = report["timbre"]
+    if not timbre["enabled"]:
+        lines.append("timbre: off")
+    elif timbre["reference_hz"] is None:
+        lines.append(f"timbre: not checked ({timbre['note']})")
+    else:
+        lines.append(f"timbre: reference {timbre['reference_hz']:.0f} Hz ({timbre['reference']}); a take more than "
+                     f"{timbre['max_drift_pct']:g}% away is not usable"
+                     + (f"; {timbre['unmeasured']} take(s) could not be measured and were not checked"
+                        if timbre["unmeasured"] else ""))
     for row in rows:
         lines.append(f"p{row['paragraph']}  ({row['words']} words) \"{row['excerpt']}\"")
         if row["must_hear"]:
@@ -309,7 +449,9 @@ def human_lines(report: dict, report_rel: str) -> list[str]:
         for k, take in enumerate(row["takes"]):
             mark = "BEST" if k == 0 and take["usable"] else ("    " if take["usable"] else "  no")
             speed = f"{take['wpm']} wpm" if take["wpm"] is not None else "-"
-            lines.append(f"  {mark}  {Path(take['take']).name:<24} {take['fidelity']:.3f}  {speed:<8}  "
+            drift = take.get("timbre_drift_pct")
+            tone = f"timbre {drift:+.0f}%  " if drift is not None else ""
+            lines.append(f"  {mark}  {Path(take['take']).name:<24} {take['fidelity']:.3f}  {speed:<8}  {tone}"
                          f"{take['rejected'] or ''}".rstrip())
             if not take["usable"] or k == 0:
                 for diff in take["differences"][:2]:
@@ -359,6 +501,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wpm-fail-band", type=vc._band_arg, default=vc.WPM_FAIL_BAND, metavar="LO,HI",
                         help="a take paced outside this band is not usable (default %g,%g; 'off' disables)"
                              % vc.WPM_FAIL_BAND)
+    parser.add_argument("--timbre-drift", type=float, default=TIMBRE_MAX_DRIFT, metavar="PCT",
+                        help="a take whose spectral centre is more than PCT percent from the reference is not usable "
+                             f"(default {TIMBRE_MAX_DRIFT:g})")
+    parser.add_argument("--no-timbre", action="store_true", help="do not measure timbre (no ffmpeg calls)")
     parser.add_argument("--apply", metavar="DIR", help="copy each usable winner to DIR/p<NNN>.<ext>")
     parser.add_argument("--language", default="en", help="language code of the narration (default en)")
     parser.add_argument("--model", default="small", help="faster-whisper model for takes without a transcript")
@@ -367,6 +513,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", help="report path (default <script folder>/qa/take-pick.json)")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
+    if not args.timbre_drift > 0:
+        print("pick_takes: error: --timbre-drift must be a positive percentage", file=sys.stderr)
+        return 2
 
     script_path = Path(args.script)
     base = script_path.resolve().parent
@@ -420,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
                 whisper.append(vc.Whisper(args.model, args.beam_size))
             return whisper[0]
 
-        rows = []
+        gathered = []
         for number in sorted(folders):
             text = paragraphs[number - 1]
             tokens = vc.normalize(text, args.language)
@@ -433,6 +582,17 @@ def main(argv: list[str] | None = None) -> int:
                                     args.wpm_band, args.wpm_fail_band, waivers)
                 takes.append({"take": vc.rel_path(take, base), "transcript": vc.rel_path(transcript, base),
                               "path": take, **scored})
+            gathered.append((number, text, words, items, takes))
+        all_takes = [take for row in gathered for take in row[-1]]
+        if args.no_timbre:
+            timbre = {"enabled": False, "max_drift_pct": args.timbre_drift}
+            for take in all_takes:
+                take["centroid_hz"] = take["timbre_drift_pct"] = None
+        else:
+            narration = Path(args.apply) if args.apply else base / "voice" / "paragraphs"
+            timbre = timbre_veto(all_takes, args.timbre_drift, narration, set(folders), base)
+        rows = []
+        for number, text, words, items, takes in gathered:
             ordered = rank(takes, args.wpm_band)
             usable = bool(ordered) and ordered[0]["usable"]
             rows.append({"paragraph": number, "excerpt": vc.excerpt(text), "words": words,
@@ -468,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         "measured_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "min_fidelity": args.min_fidelity,
         "wpm_fail_band": list(args.wpm_fail_band) if args.wpm_fail_band else None,
-        "waived": args.waive, "verdict": FAIL if failing else PASS, "failing": failing,
+        "waived": args.waive, "timbre": timbre, "verdict": FAIL if failing else PASS, "failing": failing,
         "ignored": ignored, "paragraphs": rows, "applied": applied,
     }
     try:
