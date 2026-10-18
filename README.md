@@ -1,10 +1,13 @@
 <div align="center">
 
-# tubecrew
+# 🎬 tubecrew
 
-### A YouTube production crew for your coding agent.
+### Your end-to-end YouTube crew, inside Claude Code and Codex.
 
-**Topics chosen from evidence. Every number sourced. Quality gates in code. Uploads stay private until you decide.**
+**From idea to private upload in one conversation: topic, research, script, voice, render, thumbnail, dubbing,
+upload and analytics.**
+
+**13 skills · 6 AI reviewers · quality gates written in code**
 
 [![tests](https://img.shields.io/github/actions/workflow/status/berkayburakk/tubecrew/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/berkayburakk/tubecrew/actions/workflows/test.yml)
 [![release](https://img.shields.io/github/v/release/berkayburakk/tubecrew?style=flat-square&color=294f82)](https://github.com/berkayburakk/tubecrew/releases)
@@ -20,21 +23,32 @@
 </div>
 
 > [!NOTE]
-> tubecrew never publishes on its own. Uploads are always private. A video goes public only when you publish it in
-> YouTube Studio, or when you write a time into `upload.json` and pass `--schedule` yourself.
+> **YouTube automation without the slop.** tubecrew never publishes on its own. Uploads are always private. A video
+> goes public only when you publish it in YouTube Studio, or when you write a time into `upload.json` and pass
+> `--schedule` yourself.
 
 ---
 
-tubecrew turns Claude Code or Codex into a production line for YouTube videos. It finds topics in what is already
-outperforming in your niche, keeps every figure tied to a primary source, writes scripts meant to be spoken, checks
-the voiceover, the render and the thumbnail in code, has independent agents review the work, dubs into other
-languages, uploads privately, and tells you which scene viewers left on and what to fix next.
+## ✨ What your crew does
+
+| | Station | What you get |
+|---|---|---|
+| 🔍 | **Find the topic** | Videos that beat their own channel's median, demand from free sources, competitor transcripts, and a skeptic that tries to kill every idea |
+| 📚 | **Source every number** | One `facts.json` with a link for every figure; the script gate rejects any number that is not in it |
+| ✍️ | **Write for the ear** | An opening built for the first 30 seconds, 26 AI-writing patterns removed, an independent A/B review |
+| 🎙️ | **Check the voiceover** | What the voice actually said against the script, paragraph by paragraph, with the best take picked for you |
+| 🎞️ | **Gate the render** | Loudness, a hook that really moves, black and frozen frames, subtitles synced to the spoken words |
+| 🖼️ | **Pick the thumbnail** | Every candidate judged at the size viewers see it in the feed |
+| 🌍 | **Dub it** | Meaning-first translation that keeps every number, timed to the same pictures |
+| 🔒 | **Upload privately** | Reviews bound to the exact file, login health, an optional schedule; you press publish |
+| 📈 | **Learn** | Where viewers left, scene by scene, and a channel pulse that ends in one diagnosis |
 
 Thinking stays with you and the model: which topic, what story, what looks right. Repetitive work goes to small
 scripts with exit codes: counting words, measuring loudness, matching numbers to sources, checking metadata
 limits. Reviews go to agents that did not make the thing they review.
 
-## Quick start
+<a id="quick-start"></a>
+## ⚡ Quick start
 
 ### Install
 
@@ -135,7 +149,8 @@ python skills/upload-private/scripts/upload.py my-video/            # dry run, u
 
 Exit code `0` means pass, `1` means the work needs fixing, `2` means a usage or environment problem.
 
-## How it works
+<a id="how-it-works"></a>
+## ⚙️ How it works
 
 Each station writes a file, and the next station starts only after its gate passes. You decide at three points:
 the topic, the first 60 to 90 seconds, and publishing.
@@ -160,7 +175,8 @@ the topic, the first 60 to 90 seconds, and publishing.
 - **Light on context.** No session hooks and nothing injected at startup. All thirteen skills and six agents add
   about 2.6k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
 
-## What's inside
+<a id="whats-inside"></a>
+## 📦 What's inside
 
 ### Skills
 
@@ -208,7 +224,8 @@ my-video/
 
 The full contract (verdict lines, hashes and where credentials live) is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Works with your stack
+<a id="works-with-your-stack"></a>
+## 🧰 Works with your stack
 
 tubecrew does not bundle the tools that make the video. It checks their output, whichever tool you use, and the
 `setup` skill fits the line to what you already have. The production line behind tubecrew was built on these
@@ -233,7 +250,8 @@ The full catalog, with when to pick which, is in
 [`skills/setup/references/tools.md`](skills/setup/references/tools.md). Thanks to the authors of all of these
 projects.
 
-## What tubecrew will never do
+<a id="what-tubecrew-will-never-do"></a>
+## 🛡️ What tubecrew will never do
 
 - Make a video public or delete anything. A schedule happens only when you write `publish_at` into `upload.json`
   and pass `--schedule`; the video stays private until YouTube publishes it at that time.
@@ -244,7 +262,8 @@ projects.
   monetization account behind all of your channels at risk.
 - Invent a number, a quote or a result.
 
-## FAQ
+<a id="faq"></a>
+## ❓ FAQ
 
 <details>
 <summary><strong>Does tubecrew upload or publish videos for me?</strong></summary>
@@ -290,7 +309,8 @@ skills short and moving the mechanical work into scripts leaves the agent's atte
 judgement.
 </details>
 
-## Contributing
+<a id="contributing"></a>
+## 🤝 Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, then run `python -m pytest`
 and `claude plugin validate . --strict` before opening a pull request.
@@ -298,6 +318,7 @@ and `claude plugin validate . --strict` before opening a pull request.
 New to agent skills? [`examples/starter-kit`](examples/starter-kit) is a single-skill version you can copy into a
 project in a minute.
 
-## License
+<a id="license"></a>
+## 📄 License
 
 MIT. See [LICENSE](LICENSE), and [NOTICE.md](NOTICE.md) for third-party credits.
