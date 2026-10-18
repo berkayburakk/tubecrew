@@ -25,8 +25,34 @@ The reviewer binds its verdict to the hash of the whole file, so any change, inc
 | `thumbnail_text` | no | - | list of the thumbnail's text lines, for the reviewers (it must not repeat the title) |
 | `localizations` | no | `localizations` | see below |
 | `publish_at` | no | `status.publishAt` | used only with `--schedule`; see below |
+| `short` | no | - | `true` for a YouTube Short; see below |
 
 Any other field is ignored with a warning. There is no privacy field: the upload is always private.
+
+## Shorts: `short`
+
+```json
+"short": true
+```
+
+YouTube has no "Short" switch in the upload API: it treats a square or vertical video of up to three minutes as a
+Short (uploads since 15 October 2024, [help](https://support.google.com/youtube/answer/15424877)). The field tells
+the script to gate the upload as one:
+
+- The video must be square or vertical (width at most the height, as shown after rotation) and at most 180 s;
+  otherwise the dry run FAILs, because YouTube would publish it as a regular video. ffprobe must be able to read
+  both.
+- The code gate is `qa/shorts-check-<video name>.json` from make-shorts' `shorts_check.py` (verdict PASS and the
+  video's full sha256), not `qa/render-check.json`.
+- No thumbnail is sent. YouTube documents custom Shorts thumbnails only in YouTube Studio on a computer
+  ([help](https://support.google.com/youtube/answer/72431)), so a `thumbnail` path is still checked, then reported
+  as a warning to add by hand. The upload-checker's verdict needs no `Thumbnail:` line.
+- Everything else is unchanged: private only, the render-auditor and upload-checker verdicts bound to the same
+  bytes, metadata limits, duplicate checks, `publish_at` with `--schedule`.
+- The "related video" link from a Short to the long video is set in YouTube Studio only; the script reminds you.
+
+Upload each Short from its own project folder (`render/<name>.mp4`, `upload.json`, `qa/`), because each review file
+binds one video. Without the field, a square or vertical video of 180 s or less gets a warning that suggests it.
 
 ## Translations: `localizations`
 
@@ -75,6 +101,7 @@ Any other field is ignored with a warning. There is no privacy field: the upload
   later failure can lead to a second upload of the same file.
 - `thumbnail`: `none` (no thumbnail set), `pending` (the run stopped before that step), `set` or `failed`.
   `thumbnail_http` is the HTTP status of `thumbnails.set`.
+- `short: true` appears for a Short (its thumbnail is always `none`: set it in Studio).
 - `publish_at` and `schedule_confirmed` appear only for a `--schedule` upload. `alarm` appears when YouTube reported
   anything but private. `skip_review_reason` appears when `--skip-review` was used.
 - A rerun with the same video bytes is refused and names whatever the first run left undone.

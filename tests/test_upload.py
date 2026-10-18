@@ -1201,3 +1201,131 @@ def test_upload_gate_without_a_thumbnail_line_fails_when_a_thumbnail_is_set(tmp_
     gate_file.write_text("\n".join(kept), encoding="utf-8")
     gate = [c for c in up.build_plan(project).checks if c.gate == "upload gate"][0]
     assert gate.status == "FAIL" and "Thumbnail:" in gate.detail
+
+
+# --- Shorts: upload.json "short": true ------------------------------------------------------------------------------
+
+SHORT_DESCRIPTION = "Why one deal cost 3 billion, in forty seconds."
+
+
+def write_shorts_check(project: Path, video_sha: str = None, verdict: str = "PASS") -> Path:
+    path = project / "qa" / "shorts-check-final.json"
+    path.write_text(json.dumps({"verdict": verdict, "sha256": video_sha or sha(project / "render" / "final.mp4")}),
+                    encoding="utf-8")
+    return path
+
+
+def make_short(tmp_path, monkeypatch, geometry=(1080, 1920), duration=42.0, shorts_gate=True, **overrides) -> Path:
+    """A Short project: the probes are faked (the test mp4 is only bytes), the long-form render check is removed."""
+    monkeypatch.setattr(up, "probe_geometry", lambda _path: geometry)
+    monkeypatch.setattr(up, "probe_duration", lambda _path: duration)
+    overrides.setdefault("description", SHORT_DESCRIPTION)
+    overrides.setdefault("short", True)
+    project = make_project(tmp_path, **overrides)
+    (project / "qa" / "render-check.json").unlink()
+    if shorts_gate:
+        write_shorts_check(project)
+    return project
+
+
+def gate_of(checks, name):
+    return [c for c in checks if c.gate == name]
+
+
+def test_short_dry_run_uses_the_shorts_gate(tmp_path, capsys, monkeypatch):
+    project = make_short(tmp_path, monkeypatch)
+    assert up.main([str(project)]) == 0
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out and "- Short" in out
+    assert "shorts-check-final.json PASS" in out
+    checks = up.build_plan(project).checks
+    assert [c.status for c in gate_of(checks, "short")] == ["PASS"]
+    assert "1080x1920 vertical, 42.0 s" in gate_of(checks, "short")[0].detail
+    assert up.main([str(project), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["short"] is True
+
+
+def test_short_must_be_square_or_vertical_and_at_most_180_s(tmp_path, monkeypatch):
+    project = make_short(tmp_path, monkeypatch, geometry=(1920, 1080))
+    short = gate_of(up.build_plan(project).checks, "short")
+    assert [c.status for c in short] == ["FAIL"] and "landscape" in short[0].detail
+    monkeypatch.setattr(up, "probe_geometry", lambda _path: (1080, 1080))
+    monkeypatch.setattr(up, "probe_duration", lambda _path: 180.4)
+    short = gate_of(up.build_plan(project).checks, "short")
+    assert [c.status for c in short] == ["FAIL"] and "180 s Shorts limit" in short[0].detail
+    monkeypatch.setattr(up, "probe_duration", lambda _path: 180.0)
+    assert [c.status for c in gate_of(up.build_plan(project).checks, "short")] == ["PASS"]
+    monkeypatch.setattr(up, "probe_geometry", lambda _path: None)
+    monkeypatch.setattr(up, "probe_duration", lambda _path: None)
+    short = gate_of(up.build_plan(project).checks, "short")
+    assert [c.status for c in short] == ["FAIL", "FAIL"] and all("cannot be read" in c.detail for c in short)
+
+
+def test_short_needs_its_own_gate_bound_to_the_bytes(tmp_path, monkeypatch):
+    project = make_short(tmp_path, monkeypatch, shorts_gate=False)
+    (project / "qa" / "render-check.json").write_text(
+        json.dumps({"verdict": "PASS", "sha256": sha(project / "render" / "final.mp4")}), encoding="utf-8")
+    render = gate_of(up.build_plan(project).checks, "render check")[0]
+    assert render.status == "FAIL" and "shorts-check-final.json missing" in render.detail
+    assert "long-form gate" in render.detail
+    write_shorts_check(project, video_sha="0" * 64)
+    render = gate_of(up.build_plan(project).checks, "render check")[0]
+    assert render.status == "FAIL" and "re-run shorts_check.py" in render.detail
+    write_shorts_check(project, verdict="FAIL")
+    assert gate_of(up.build_plan(project).checks, "render check")[0].status == "FAIL"
+    # --skip-review never stands in for the code gate
+    assert not up.build_plan(project, skip_reason="reviewer is away this week").ok
+
+
+def test_short_thumbnail_is_kept_for_studio_and_never_sent(tmp_path, capsys, monkeypatch):
+    project = make_short(tmp_path, monkeypatch, thumbnail=True)
+    thumb = gate_of(up.build_plan(project).checks, "thumbnail")[0]
+    assert thumb.status == "WARN" and "Studio on a computer" in thumb.detail and "answer/72431" in thumb.detail
+    session = fake_upload(monkeypatch, [channels_ok(), playlist(), *upload_ok()])  # no thumbnails.set call
+    assert up.main([str(project), "--upload"]) == 0
+    out = capsys.readouterr().out
+    assert "related video" in out and "thumbnail" in out
+    assert len(session.calls) == 4 and not any("thumbnails" in call[1] for call in session.calls)
+    body = session.calls[2][2]["json"]
+    assert body["status"]["privacyStatus"] == "private"
+    entry = log_entry(project)
+    assert entry["short"] is True and entry["thumbnail"] == "none"
+
+
+def test_short_flag_must_be_a_boolean(tmp_path, monkeypatch):
+    project = make_short(tmp_path, monkeypatch, short="yes")
+    meta = [c for c in up.build_plan(project).checks if c.gate == "metadata" and c.status == "FAIL"]
+    assert any("short must be true or false" in c.detail for c in meta)
+    errors, warnings = up.validate_metadata(base_meta(short=False))
+    assert errors == [] and not any("unknown field" in w for w in warnings)
+
+
+def test_vertical_video_without_the_flag_gets_a_warning(tmp_path, monkeypatch):
+    monkeypatch.setattr(up, "probe_geometry", lambda _path: (1080, 1920))
+    monkeypatch.setattr(up, "probe_duration", lambda _path: 30.0)
+    project = make_project(tmp_path, description=SHORT_DESCRIPTION)
+    short = gate_of(up.build_plan(project).checks, "short")
+    assert [c.status for c in short] == ["WARN"] and "\"short\": true" in short[0].detail
+    monkeypatch.setattr(up, "probe_geometry", lambda _path: (1920, 1080))
+    assert gate_of(up.build_plan(project).checks, "short") == []
+
+
+def test_parse_geometry_applies_rotation():
+    def probe(**stream):
+        return json.dumps({"streams": [{"codec_type": "audio"}, dict(codec_type="video", **stream)]})
+    assert up.parse_geometry(probe(width=1920, height=1080)) == (1920, 1080)
+    assert up.parse_geometry(probe(width=1920, height=1080, tags={"rotate": "90"})) == (1080, 1920)
+    assert up.parse_geometry(probe(width=1920, height=1080, side_data_list=[{"rotation": -90}])) == (1080, 1920)
+    assert up.parse_geometry(probe(width=1080, height=1080, side_data_list=[{"rotation": 180}])) == (1080, 1080)
+    assert up.parse_geometry("not json") is None and up.parse_geometry(json.dumps({"streams": []})) is None
+    assert up.shorts_shape((1080, 1920), 180.0) is True and up.shorts_shape((1080, 1920), 181) is False
+    assert up.shorts_shape(None, 30) is None
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg and ffprobe")
+def test_probe_geometry_on_a_real_vertical_clip(tmp_path):
+    video = tmp_path / "vertical.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x112:d=1", "-y", str(video)],
+                   check=True, timeout=60)
+    assert up.probe_geometry(video) == (64, 112)
+    assert up.probe_geometry(tmp_path / "missing.mp4") is None

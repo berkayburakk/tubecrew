@@ -10,6 +10,10 @@ the same time, confirms that the token belongs to `upload.json`'s `channel_id`, 
 uploads already hold this exact title (an earlier run whose answer got lost may have uploaded it), uploads resumably
 in 8 MB chunks, writes the video id to `qa/upload-log.json` at once, and only then sets the thumbnail.
 
+Shorts: with `"short": true` in upload.json the dry run also requires a square or vertical video of at most 180 s,
+takes the code gate from `qa/shorts-check-<video name>.json` (make-shorts) instead of `qa/render-check.json`, and
+sends no thumbnail (YouTube documents custom Shorts thumbnails only in Studio on a computer).
+
 Why private only: a private upload can be checked, fixed or removed quietly; a public one cannot be taken back
 unseen (subscriber notifications, feeds and the first hours of data are spent at once). The request body always says
 `privacyStatus: "private"`. Scheduling is opt-in: only when the creator writes `publish_at` in upload.json AND passes
@@ -80,6 +84,11 @@ TOKEN_WARN_HOURS = 48  # two days' notice: time to log in again before an upload
 TESTING_TOKEN_DAYS = 7  # Google: External OAuth apps in Testing status get refresh tokens that expire in 7 days
 UNLIMITED_AFTER_DAYS = 8  # a login that still refreshes after 8 days with no reported expiry has no 7-day limit
 REPLACEMENT_CHAR = "\ufffd"  # what a wrong-encoding conversion leaves where a character could not be decoded
+# Shorts ("short": true). YouTube counts square and vertical uploads of up to three minutes as Shorts (uploads since
+# 15 October 2024): https://support.google.com/youtube/answer/15424877. Custom Shorts thumbnails are documented
+# only for YouTube Studio on a computer: https://support.google.com/youtube/answer/72431 - so none is sent by API.
+SHORTS_MAX_S = 180.0
+SHORTS_THUMBNAIL_HELP = "https://support.google.com/youtube/answer/72431"
 
 UPLOAD_SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
                  "https://www.googleapis.com/auth/youtube.readonly"]
@@ -90,10 +99,11 @@ PIP_HINT = "pip install google-auth google-auth-oauthlib requests"
 
 UPLOAD_JSON = "upload.json"
 RENDER_CHECK = "render-check.json"
+SHORTS_CHECK = "shorts-check-{stem}.json"  # make-shorts' shorts_check.py, named after the video file
 UPLOAD_LOG = "upload-log.json"
 KNOWN_FIELDS = {"title", "description", "tags", "category_id", "default_language", "default_audio_language",
                 "made_for_kids", "synthetic_media", "channel_id", "thumbnail", "localizations", "publish_at",
-                "thumbnail_text"}
+                "thumbnail_text", "short"}
 
 _CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}")
 _LANGUAGE = re.compile(r"[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
@@ -136,6 +146,8 @@ class Plan:
     video: Optional[Path] = None
     video_sha: Optional[str] = None
     duration: Optional[float] = None
+    geometry: Optional[tuple] = None  # (width, height) as shown, rotation applied; None when ffprobe cannot tell
+    short: bool = False  # upload.json "short": true
     thumbnail: Optional[Path] = None
     thumb_sha: Optional[str] = None
     skip_reason: Optional[str] = None
@@ -342,6 +354,8 @@ def validate_metadata(meta: dict, upload_mode: bool = False) -> tuple:
     lines = meta.get("thumbnail_text")
     if lines is not None and not (isinstance(lines, list) and all(isinstance(t, str) for t in lines)):
         warnings.append("thumbnail_text should be a list of the thumbnail's text lines")
+    if "short" in meta and not isinstance(meta["short"], bool):
+        errors.append("short must be true or false (true: the video is a YouTube Short)")
     unknown = sorted(set(meta) - KNOWN_FIELDS)
     if unknown:
         warnings.append(f"unknown field(s) ignored: {', '.join(unknown)} (uploads are always private; publish in "
@@ -481,6 +495,29 @@ def check_render_json(qa_dir: Path, video_sha: str) -> tuple:
     return True, f"qa/{RENDER_CHECK} PASS for sha256:{video_sha[:12]}"
 
 
+def check_shorts_json(qa_dir: Path, video: Path, video_sha: str) -> tuple:
+    """(ok, detail) for a Short: `qa/shorts-check-<video stem>.json` from make-shorts' shorts_check.py, verdict PASS
+    and the full sha256 of this video. It holds every render_check measurement plus the Shorts rules."""
+    name = SHORTS_CHECK.format(stem=video.stem)
+    path = qa_dir / name
+    if not path.is_file():
+        hint = f" (qa/{RENDER_CHECK} is the long-form gate)" if (qa_dir / RENDER_CHECK).is_file() else ""
+        return False, f"qa/{name} missing: run make-shorts' shorts_check.py on this Short{hint}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False, f"qa/{name} is not valid JSON"
+    if not isinstance(data, dict):
+        return False, f"qa/{name} is not a JSON object"
+    if data.get("verdict") != "PASS":
+        return False, f"qa/{name} verdict is {data.get('verdict')!r}, not \"PASS\""
+    measured = str(data.get("sha256") or "").lower()
+    if measured != video_sha:
+        return False, (f"qa/{name} measured sha256:{measured[:12] or '?'} but the video is sha256:{video_sha[:12]}: "
+                       "re-run shorts_check.py on the current file")
+    return True, f"qa/{name} PASS for sha256:{video_sha[:12]}"
+
+
 def check_review(qa_dir: Path, kind: str, video_sha: str, meta_sha: Optional[str] = None,
                  thumb_sha: Optional[str] = None) -> tuple:
     """(ok, detail) for the newest RENDER-AUDIT (expects PASS) or UPLOAD-GATE (expects GO, the metadata hash and,
@@ -572,6 +609,53 @@ def probe_duration(path: Path) -> Optional[float]:
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return None
     return value if value > 0 else None
+
+
+def parse_geometry(ffprobe_json: str) -> Optional[tuple]:
+    """ffprobe `-show_streams -of json` output -> (width, height) of the first picture track as it is shown: a
+    90 or 270 degree rotation (phone footage) swaps the sides. None when there is no readable picture track."""
+    try:
+        streams = json.loads(ffprobe_json or "{}").get("streams") or []
+    except (ValueError, AttributeError):
+        return None
+    for s in streams:
+        if s.get("codec_type") != "video" or (s.get("disposition") or {}).get("attached_pic"):
+            continue
+        try:
+            width, height = int(s["width"]), int(s["height"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        rotation = 0
+        for value in [(s.get("tags") or {}).get("rotate")] + [d.get("rotation") for d in s.get("side_data_list") or []
+                                                               if isinstance(d, dict)]:
+            try:
+                rotation = int(round(float(value))) % 360
+                break
+            except (TypeError, ValueError):
+                continue
+        return (height, width) if rotation % 180 == 90 else (width, height)
+    return None
+
+
+def probe_geometry(path: Path) -> Optional[tuple]:
+    """(width, height) as shown, via ffprobe; None when ffprobe is missing or cannot read the file."""
+    exe = shutil.which("ffprobe")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-v", "error", "-of", "json", "-show_streams", str(path)], capture_output=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_geometry(r.stdout) if r.returncode == 0 else None
+
+
+def shorts_shape(geometry: Optional[tuple], duration: Optional[float]) -> Optional[bool]:
+    """True when YouTube would treat the video as a Short (square or vertical, at most 180 s), False when not,
+    None when the size or length is unknown."""
+    if geometry is None or duration is None:
+        return None
+    return geometry[0] <= geometry[1] and duration <= SHORTS_MAX_S
 
 
 def rel(path: Path, project: Path) -> str:
@@ -735,6 +819,25 @@ def upload_lock(qa_dir: Path):
 
 # --- the plan: everything read from disk, no network --------------------------------------------------------------
 
+def short_checks(geometry: Optional[tuple], duration: Optional[float]) -> list:
+    """Checks for upload.json "short": true: the video must be square or vertical and at most SHORTS_MAX_S long,
+    or YouTube publishes it as a regular video."""
+    problems = []
+    if geometry is None:
+        problems.append("the picture size cannot be read (is ffprobe on PATH?); a Short must be square or vertical")
+    elif geometry[0] > geometry[1]:
+        problems.append(f"{geometry[0]}x{geometry[1]} is landscape: YouTube would publish it as a regular video; a "
+                        "Short is square or vertical")
+    if duration is None:
+        problems.append(f"the length cannot be read (is ffprobe on PATH?); a Short is at most {SHORTS_MAX_S:g} s")
+    elif duration > SHORTS_MAX_S:
+        problems.append(f"{duration:.1f} s is over the {SHORTS_MAX_S:g} s Shorts limit")
+    if problems:
+        return [Check("short", "FAIL", p) for p in problems]
+    shape = "square" if geometry[0] == geometry[1] else "vertical"
+    return [Check("short", "PASS", f"{geometry[0]}x{geometry[1]} {shape}, {duration:.1f} s (limit {SHORTS_MAX_S:g} s)")]
+
+
 def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = False,
                skip_reason: Optional[str] = None, again: bool = False, schedule: bool = False) -> Plan:
     plan = Plan(project=project, upload_mode=upload_mode, skip_reason=skip_reason, again=again)
@@ -748,6 +851,7 @@ def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = 
     if plan.video is not None:
         plan.video_sha = sha256_file(plan.video)
         plan.duration = probe_duration(plan.video)
+        plan.geometry = probe_geometry(plan.video)
         size_mb = plan.video.stat().st_size / 1e6
         length = fmt_time(plan.duration) if plan.duration else "unknown"
         add(Check("video", "PASS", f"{rel(plan.video, project)}, {size_mb:.1f} MB, duration {length}"))
@@ -790,10 +894,23 @@ def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = 
                                               + " ".join(fmt_time(c[0]) for c in chapters)))
         else:
             add(Check("chapters", "PASS", "no timestamp lines in the description (no chapters)"))
+        plan.short = meta.get("short") is True
         plan.thumbnail, thumb_check = check_thumbnail(project, meta.get("thumbnail"))
+        if plan.short and plan.thumbnail:
+            thumb_check = Check("thumbnail", "WARN", f"{rel(plan.thumbnail, project)} is not sent for a Short: YouTube "
+                                                     "documents custom Shorts thumbnails only in YouTube Studio on a "
+                                                     f"computer ({SHORTS_THUMBNAIL_HELP}); add it there after the "
+                                                     "upload")
+            plan.thumbnail = None
         add(thumb_check)
         if plan.thumbnail:
             plan.thumb_sha = sha256_file(plan.thumbnail)
+        if plan.short and plan.video is not None:
+            plan.checks += short_checks(plan.geometry, plan.duration)
+        elif plan.video is not None and shorts_shape(plan.geometry, plan.duration):
+            add(Check("short", "WARN", f"{plan.geometry[0]}x{plan.geometry[1]}, {fmt_time(plan.duration)}: YouTube "
+                                       "will treat this square or vertical video as a Short. Set \"short\": true in "
+                                       "upload.json to run the Shorts gates"))
         raw = meta.get("publish_at")
         if schedule:
             if raw is None:
@@ -819,7 +936,10 @@ def build_plan(project: Path, video: Optional[Path] = None, upload_mode: bool = 
             add(Check(gate, "FAIL", "no video to bind the verdict to"))
         return plan
 
-    ok, detail = check_render_json(qa, plan.video_sha)
+    if plan.short:
+        ok, detail = check_shorts_json(qa, plan.video, plan.video_sha)
+    else:
+        ok, detail = check_render_json(qa, plan.video_sha)
     add(Check("render check", "PASS" if ok else "FAIL", detail))
     for gate, kind in (("render audit", "RENDER-AUDIT"), ("upload gate", "UPLOAD-GATE")):
         ok, detail = check_review(qa, kind, plan.video_sha, plan.meta_sha, plan.thumb_sha)
@@ -1417,6 +1537,8 @@ def print_plan(plan: Plan, say: Out) -> None:
         mode = "UPLOAD (private only" + (", scheduled by publish_at)" if plan.publish_at else ")")
     else:
         mode = "DRY RUN (no network; nothing is uploaded)"
+    if plan.short:
+        mode += " - Short"
     say(f"upload.py - {mode}")
     say(f"project: {plan.project.name}")
     say("")
@@ -1443,6 +1565,7 @@ def plan_json(plan: Plan) -> dict:
             "metadata_sha256": plan.meta_sha,
             "thumbnail_sha256": plan.thumb_sha,
             "duration_s": plan.duration,
+            "short": plan.short,
             "publish_at": plan.publish_at,
             "ok": plan.ok,
             "checks": [{"gate": c.gate, "status": c.status, "detail": c.detail} for c in plan.checks]}
@@ -1552,6 +1675,8 @@ def do_upload(plan: Plan, profile: str, say: Out) -> tuple:
     entry = {"video_id": video_id, "video": rel(plan.video, plan.project), "sha256": plan.video_sha,
              "uploaded_at": iso(utcnow()), "privacy": "private", "channel_id": meta["channel_id"],
              "title": meta["title"], "thumbnail": "pending" if plan.thumbnail else "none"}
+    if plan.short:
+        entry["short"] = True
     if plan.publish_at:
         entry.update(publish_at=plan.publish_at, schedule_confirmed=False)
     if plan.skip_reason:
@@ -1624,7 +1749,10 @@ def do_upload(plan: Plan, profile: str, say: Out) -> tuple:
     save_log()
 
     say(f"https://studio.youtube.com/video/{video_id}/edit")
-    if plan.publish_at:
+    if plan.short:
+        say("Left for you in Studio (on a computer): the Short's thumbnail, the related video that links it to the "
+            "long video, then " + ("check the schedule." if plan.publish_at else "publish or schedule."))
+    elif plan.publish_at:
         say("Left for you in Studio: end screen, cards, audio tracks. YouTube publishes the video at publish_at; "
             "change or cancel that in Studio.")
     else:

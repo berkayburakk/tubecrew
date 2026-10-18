@@ -38,8 +38,10 @@ python $SKILL/scripts/upload.py <video-project> --login --profile mychannel
 }
 ```
 
-Optional fields (`localizations`, `publish_at`, `default_audio_language`, `thumbnail_text`) and every rule are in
-`$SKILL/references/upload-json.md`. Save the file as UTF-8; the script refuses any other encoding.
+Optional fields (`localizations`, `publish_at`, `default_audio_language`, `thumbnail_text`, `short`) and every rule
+are in `$SKILL/references/upload-json.md`. Save the file as UTF-8; the script refuses any other encoding.
+For a YouTube Short add `"short": true`: the video must be square or vertical and at most 180 s, the code gate is
+make-shorts' `qa/shorts-check-<name>.json`, and the thumbnail is left for YouTube Studio.
 
 - `synthetic_media` is YouTube's altered or synthetic content disclosure. Set it to `true` when the video shows
   realistic AI-generated or altered footage of real people, places or events. Animation, AI script help and a
