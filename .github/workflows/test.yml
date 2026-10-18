@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 6 * * 1"   # weekly: catches breakage from new runner images, FFmpeg or yt-dlp releases
+  workflow_dispatch:
 
 jobs:
   python:
