@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 - 2026-10-18
+
+- New `make-shorts` skill: `shorts_pick.py` proposes 3-5 cuts that work for a stranger in the first two seconds
+  (re-ranked by retention when it is available), `shorts_cut.py` reframes a cut to 1080x1920 (fit or crop) with
+  captions re-timed to it, and `shorts_check.py` gates the Short with render_check's measurements plus aspect,
+  the 3-minute limit, a moving opening, the loop and the UI safe zones.
+- `upload.py`: optional `"short": true` (square or vertical, at most 180 s, the Shorts check instead of the render
+  check, no thumbnail through the API). A vertical video under 180 s without the flag gets a warning.
+- CI: Node 24 releases of the GitHub actions, the morph-clips engine on Node 22, a weekly run, and Dependabot for
+  the action versions.
+
 ## 0.3.2 - 2026-10-18
 
 - `render_check.py`: total silence (-60 dB) is measured in its own audio-only pass. ffmpeg 6.x does not name the
