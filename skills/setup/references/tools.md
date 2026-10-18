@@ -8,7 +8,8 @@ current terms on each project's page.
 
 | Tool | Cost | How tubecrew uses it |
 |---|---|---|
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Free (Unlicense) | `outliers.py` pulls public channel catalogs to compare each video with its channel's median |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Free (Unlicense) | `outliers.py` pulls public channel catalogs to compare each video with its channel's median; `demand.py` reads search results for a reachable step |
+| [Wikimedia pageviews](https://wikimedia.org/api/rest_v1/) | Free, no key | `demand.py` measures curiosity as a multiple of a topic that already worked for the creator |
 | vidIQ | Subscription | Optional: keyword volume and outlier search through its own tools; not required |
 
 ## Second model for checks (`verifier`)
@@ -38,7 +39,9 @@ the creator.
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | Free (Apache-2.0), local NVIDIA GPU | Local narration and voice cloning without a subscription |
 | Your own recording | Free | The most trusted voice; `check-voiceover` compares a take with the script just the same |
 
-Whatever the source, `check-voiceover` runs before visuals are synced to the narration.
+Whatever the source, `check-voiceover` runs before visuals are synced to the narration. For generated voices,
+`pick_takes.py` keeps the most faithful take per paragraph and `trim_silence.py` shortens long pauses without
+stretching speech.
 
 ## Transcription
 
@@ -57,7 +60,8 @@ Whatever the source, `check-voiceover` runs before visuals are synced to the nar
 | Your video editor | Your editor's license | Final assembly by hand; the render gate still applies |
 
 Pick one engine per project. Prefer Remotion if the creator reads React, HyperFrames if they read HTML. Both export
-an MP4 that `check-render` measures.
+an MP4 that `check-render` measures. With [RapidOCR](https://github.com/RapidAI/RapidOCR) installed
+(`pip install rapidocr-onnxruntime`, Apache-2.0), `text_dose.py` also measures how much of the runtime is text cards.
 
 ## Generated clips (`clips`)
 
@@ -77,16 +81,19 @@ footage of real people, places or events needs `synthetic_media: true` in `uploa
 | CosyVoice | Free, local GPU | Cross-language narration in the creator's voice; translate the script first, then run `check-voiceover` per language |
 | ElevenLabs | Subscription | Dubbing and translated narration with credits |
 
-YouTube's API cannot attach extra audio tracks: add dubbed tracks in YouTube Studio.
+The `localize` skill runs the translation, a native-listener audit, `check-voiceover` per language and
+`dub_fit.py`, which checks that every dubbed paragraph fits the original timing. Translated titles and descriptions
+go into `upload.json` `localizations`. YouTube's API cannot attach extra audio tracks: add dubbed tracks in
+YouTube Studio.
 
 ## Music
 
-ElevenLabs Music (subscription) or the free YouTube Audio Library. Keep music under the narration; `check-render`
-measures the final loudness.
+ElevenLabs Music (subscription) or the free YouTube Audio Library. Keep music under the narration;
+`normalize_audio.py` brings the final mix to -14 LUFS and `check-render` measures it.
 
 ## Upload and analytics
 
 | Tool | Cost | How tubecrew uses it |
 |---|---|---|
-| YouTube Data API and Analytics API | Free daily quota, your own Google Cloud project | `upload.py` (private uploads) and `retention.py`; setup in `upload-private/references/oauth-setup.md` |
-| YouTube Studio | Free | Publishing, scheduling, end screens, audio tracks |
+| YouTube Data API and Analytics API | Free daily quota, your own Google Cloud project | `upload.py` (private uploads, optional `--schedule`), `retention.py` and `pulse.py`; setup in `upload-private/references/oauth-setup.md` |
+| YouTube Studio | Free | Publishing, end screens, audio tracks, impressions and click-through rate (not in the API) |

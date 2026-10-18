@@ -1,6 +1,6 @@
 {
   "_note": "Example only. Acme Corp is made up and every value, source and URL below is fictional. Replace each entry with a real number and its real source; keep one entry per number the script or the visuals use.",
-  "_types": "primary = the company, regulator or official dataset said it; news = a report about it; estimate = an analyst or model; own-calculation = yours, with the formula in calc using other keys.",
+  "_types": "primary = the company, regulator or official dataset said it; news = a report about it; estimate = an analyst or model; market = exchange or market data (a price, an index level, a yield), with as_of naming the date and the session or time zone; own-calculation = yours, with the formula in calc using other keys.",
   "acme_revenue_2025": {
     "value": 12.5,
     "unit": "billion $",
@@ -48,6 +48,16 @@
     "url": "https://example.com/research/widget-market-2025",
     "accessed": "2026-03-06",
     "as_of": "calendar year 2025"
+  },
+  "acme_share_close_2026_03_04": {
+    "value": 41.27,
+    "unit": "$ per share",
+    "type": "market",
+    "source": "Example Stock Exchange, historical prices for ACME (the exchange's own series)",
+    "url": "https://example.com/exchange/acme/historical",
+    "accessed": "2026-03-05",
+    "as_of": "2026-03-04 close, ET",
+    "quote": "03/04/2026 Close/Last $41.27"
   },
   "do_not_use": [
     {

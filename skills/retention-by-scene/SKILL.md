@@ -20,7 +20,9 @@ python $SKILL/scripts/retention.py --login --profile mychannel
 
 ## Run
 
-Wait 3+ days after publishing; Analytics lags and small videos may return no curve at first.
+A video under 72 hours old or under 100 engaged views gets "too early to judge" and a date to come back instead
+of a report: a curve from a handful of viewers is noise. Write no lesson from it. `--anyway` shows the numbers,
+marked NOT JUDGED.
 
 ```bash
 python $SKILL/scripts/retention.py <video_id> --profile mychannel --srt voice/captions.srt

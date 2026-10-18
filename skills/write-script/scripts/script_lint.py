@@ -9,21 +9,37 @@ markers. Paragraph ids at the start of a line (`P01 ...` or `**P01** ...`) are k
 location is a line number (`L12`). A `{key}` placeholder counts as 3 words (a spoken number is rarely one word).
 
 Reported: words, runtime at --wpm, sentences (average, longest), every sentence over 30 words, runs of
-sentences that open with the same word, AI-vocabulary hits, setup phrases ("here's the thing"), "not X, but Y" /
-"isn't just ... it's" contrasts, em/en dashes, "What if" openers, fragment runs (3+ sentences under 5 words),
-exclamation marks, the words spoken in the first 5 seconds and the final sentence. With --phrase: the second at
-which the phrase starts and whether that is within 30 s.
+sentences that open with the same word, AI-vocabulary hits, vague attributions ("studies show", "experts agree")
+in sentences that name no source, setup phrases ("here's the thing"), "not X, but Y" / "isn't just ... it's"
+contrasts, em/en dashes, "What if" openers, fragment runs (3+ sentences under 5 words), exclamation marks, the
+words spoken in the first 5 seconds and the final sentence. With --phrase: the second at which the phrase starts
+and whether that is within 30 s.
+
+Opening checks (warnings, never a gate; seconds are estimated from word counts at --wpm):
+  - "you already know" / "bear with me" / greeting phrases anywhere in the first ~17 s, or an "Imagine" opener
+  - no concrete number (digit, %, number word or {placeholder}) in the first ~12 s
+  - a first sentence over 12 words
+  - "in this video" in the first sentence (read together with the next one when it is very short)
+  - an intro or brand marker (`[INTRO]`, `[BRAND: ...]`, `[[intro]]`) that lands after ~25 s (aim for ~20 s)
+  - the opening triangle: a proper noun and a concrete object (with the number above) in the first ~12 s
+
+--triggers FILE checks that the words on-screen animations are keyed to still exist after a rewrite. FILE is a
+JSON list of {"word", "nth", "paragraph"} (nth counts from 0, paragraph is optional) or plain lines
+"[P05] word [nth]". Words are compared lower-cased with punctuation other than $ % - removed. A missing trigger
+would not break a render; the animation would silently slide to the start of its paragraph.
 
 Run:
   python script_lint.py script.md
   python script_lint.py script.md --phrase "how does a credit card make money" --gate --out qa/script-lint.json
   python script_lint.py script.md --gate --allow leverage,landscape --json
+  python script_lint.py script.md --triggers visuals/triggers.json
 
---gate fails (exit 1) on any sentence over 30 words, any AI-vocabulary hit not in --allow, or a phrase that starts
-after 30 s (or is missing). Pattern counts are guidance, never a gate. The English word lists find nothing in
-other languages; the length, runtime, opening and phrase metrics still work there.
+--gate fails (exit 1) on any sentence over 30 words, any AI-vocabulary hit or unsourced vague attribution not in
+--allow, or a phrase that starts after 30 s (or is missing). A missing trigger exits 1 even without --gate. Other
+pattern counts and the opening checks are guidance, never a gate. The English word lists find nothing in other
+languages; the length, runtime, number, first-sentence, intro and phrase metrics still work there.
 
-Exit codes: 0 pass (or no --gate), 1 gate failed, 2 usage error.
+Exit codes: 0 pass (or no --gate), 1 gate failed or a trigger is missing, 2 usage error.
 """
 from __future__ import annotations
 
@@ -46,6 +62,14 @@ FRAGMENT_WORDS = 5   # a fragment has fewer words than this
 FRAGMENT_RUN = 3
 PLACEHOLDER_WEIGHT = 3
 GUIDE_LINE = "Counts guide the reviewer; the reviewer decides."
+
+# Opening checks: warnings only. Retention curves show the first half-minute is where most viewers decide.
+KNOWN_WINDOW_S = 17.0      # viewers leave between ~6 and ~17 s when told they already know the story
+NUMBER_WINDOW_S = 12.0     # a number, a name and an object in the first ~12 s give the viewer something to hold
+FIRST_SENTENCE_MAX = 12    # about 5 s at 155 wpm: the first sentence fits the 5-second promise
+FIRST_BEAT_WORDS = 8       # "in this video" is looked for in sentence 1, plus sentence 2 if sentence 1 is shorter
+INTRO_TARGET_S = 20.0      # an intro or brand sting belongs after the hook, at about 20 s
+INTRO_LATE_S = 25.0        # warn only past 25 s, so ordinary pacing differences do not trigger it
 
 # (term, regex, case_sensitive). Bare forms only where an inflection is ordinary English ("elevated levels").
 AI_VOCAB = [
@@ -90,6 +114,55 @@ SETUP_PHRASES = [
     ("make no mistake", r"make no mistake"),
     ("the truth is", r"the truth is"),
 ]
+# Unnamed authority. Gated like AI vocabulary, because it reads as invented evidence; a sentence that names its
+# source in the same breath ("studies show, according to the OECD, ...") is not counted.
+VAGUE_ATTRIBUTIONS = [
+    ("experts agree", r"experts (?:agree|agreed|agreeing)"),
+    ("experts say", r"experts (?:say|said|saying)"),
+    ("studies show", r"studies (?:show|showed|shown|showing|have shown|suggest|suggested)"),
+    ("research shows", r"research (?:shows|showed|shown|showing|has shown|suggests|suggested)"),
+    ("many argue", r"many (?:argue|argued|arguing|believe|believed)"),
+    ("some say", r"some (?:say|said|saying|argue|argued|believe|believed)"),
+    ("widely regarded", r"widely (?:regarded|considered|believed|seen)"),
+    ("it is believed", r"it(?: is|'s) (?:believed|said|thought|widely known)"),
+    ("scientists believe", r"scientists (?:believe|believed|believing|agree|agreed|say|said)"),
+]
+# Words that, next to a proper noun, mark a named source: "a Gallup poll", "data from the Census Bureau".
+SOURCE_NOUNS = {"study", "studies", "survey", "surveys", "report", "reports", "paper", "papers", "poll", "polls",
+                "analysis", "data", "review", "research", "filing", "filings", "researchers", "economists",
+                "scientists", "analysts", "census", "institute", "university", "journal"}
+SOURCE_PREPS = {"by", "from", "per", "at"}
+# Opening phrases that cost viewers (family, phrases). Curly apostrophes are flattened before matching.
+OPENING_PHRASES = [
+    ("already know", ["you already know", "you already knew", "you have known", "you've heard", "you have heard",
+                      "you've probably heard", "you probably know", "we all know", "we've all heard",
+                      "everyone knows", "everybody knows"]),
+    ("asks for patience", ["bear with me", "stay with me", "before we start", "before we begin",
+                           "before we get started"]),
+    ("greeting", ["welcome back", "welcome to the channel", "welcome to my channel", "hey guys", "hi guys",
+                  "hey everyone", "hi everyone", "hello everyone", "don't forget to subscribe"]),
+]
+OPENING_ADVICE = {
+    "already know": "it tells the viewer there is nothing new here",
+    "asks for patience": "it asks for patience instead of earning it",
+    "greeting": "a greeting or channel pitch delays the promise",
+}
+THIS_VIDEO_RE = re.compile(r"\b(?:in|of) (?:this|today's) (?:video|episode)\b|\btoday's video\b|"
+                           r"\bthis video (?:is|will|shows)\b", re.I)
+NUMBER_WORDS_RE = re.compile(r"\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|"
+                             r"fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|"
+                             r"trillions?|half|dozens?|percent)\b", re.I)
+NAME_WITH_DIGIT_RE = re.compile(r"\b[A-Za-z]+-\d+\b")   # GPT-5, F-35: names, not quantities
+# Concrete, picturable things (a proxy: it cannot see the screen, only whether the words name an object).
+CONCRETE_OBJECT_RE = re.compile(
+    r"\b(?:coins?|pennies|penny|cents?|dollars?|bills?|banknotes?|gold|silver|copper|bars?|ingots?|vaults?|"
+    r"safes?|wallets?|purses?|cards?|receipts?|che(?:que|ck)s?|tickets?|stamps?|shares?|certificates?|bonds?|"
+    r"contracts?|letters?|ledgers?|books?|maps?|films?|cameras?|houses?|homes?|farms?|tractors?|fields?|"
+    r"factor(?:y|ies)|warehouses?|stores?|shops?|ships?|boats?|trains?|trucks?|planes?|cars?|phones?|laptops?|"
+    r"computers?|chips?|screens?|keys?|doors?|counters?|windows?|tables?|cups?|bread|loa(?:f|ves)|eggs?|"
+    r"bottles?|jars?|boxes?|bags?|envelopes?|papers?|dice|lottery|rings?|shoes?)\b", re.I)
+INTRO_MARK_RE = re.compile(r"\[\[?\s*(?:intro|brand(?:ing)?|title card|logo sting)\b[^\]\n]*\]\]?", re.I)
+FIRST_PERSON_CAPS = {"i", "i'm", "i've", "i'll", "i'd"}
 CONTRAST_RES = [
     re.compile(r"\bnot\s+(?:just|only|merely|simply)\b[^.?!;]{1,80}?\bbut\b", re.I),
     re.compile(r"\bnot\b[^.?!;]{1,60}?,\s*but\b", re.I),
@@ -365,7 +438,242 @@ def opening_words(sentences: list[dict], wpm: float, seconds: float = OPENING_S)
     return " ".join(picked)
 
 
-def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[str] | None = None) -> dict:
+# ---------------------------------------------------------------------------------------------------------------
+# Vague attributions
+# ---------------------------------------------------------------------------------------------------------------
+
+def _is_proper(tok: str) -> bool:
+    word = tok.strip(".,;:!?\"'“”‘’()[]—–-…")
+    if not word or not word[0].isalpha() or not word[0].isupper():
+        return False
+    return word.lower() not in FIRST_PERSON_CAPS
+
+
+def names_source(sentence: str) -> bool:
+    """True when the sentence says where the claim comes from: "according to ...", or a proper noun next to a
+    source word ("a Gallup poll", "a 2023 paper in Nature") or after by/from/per/at ("data from the OECD").
+    A name that is the sentence's first word is not recognized (every sentence starts with a capital)."""
+    if re.search(r"\baccording to\b", sentence, re.I):
+        return True
+    toks = tokens(sentence)
+    norm = [_norm_token(t) for t in toks]
+    for i in range(1, len(toks)):
+        if not _is_proper(toks[i]):
+            continue
+        if SOURCE_NOUNS & set(norm[max(0, i - 2):i] + norm[i + 1:i + 3]):
+            return True
+        prev = norm[i - 1]
+        if prev in SOURCE_PREPS or (prev in ARTICLES and i >= 2 and norm[i - 2] in SOURCE_PREPS):
+            return True
+    return False
+
+
+def find_vague(sentences: list[dict], allow: set[str]) -> list[dict]:
+    hits = []
+    for idx, s in enumerate(sentences):
+        named = None
+        for term, pattern in VAGUE_ATTRIBUTIONS:
+            for m in re.finditer(r"\b(?:" + pattern + r")\b", s["text"], re.I):
+                if named is None:
+                    named = names_source(s["text"])
+                allowed = term in allow or m.group(0).lower() in allow
+                hits.append({"term": term, "match": m.group(0), "loc": s["loc"], "line": s["line"],
+                             "named_source": named, "allowed": allowed, "_order": (idx, m.start())})
+    hits.sort(key=lambda h: h.pop("_order"))
+    return hits
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Opening checks (warnings only)
+# ---------------------------------------------------------------------------------------------------------------
+
+def _timed_stream(sentences: list[dict], wpm: float) -> list[dict]:
+    """Every spoken token with the estimated second it starts at."""
+    out, cum = [], 0
+    for si, s in enumerate(sentences):
+        for k, t in enumerate(tokens(s["text"])):
+            out.append({"tok": t, "sent": si, "first": k == 0, "s": cum / wpm * 60.0, "loc": s["loc"]})
+            cum += token_weight(t)
+    return out
+
+
+def _is_number_token(tok: str) -> bool:
+    if PLACEHOLDER_RE.search(tok):
+        return True  # placeholders are filled from facts.json, nearly always with a number
+    return bool(re.search(r"\d|%", NAME_WITH_DIGIT_RE.sub(" ", tok))) or bool(NUMBER_WORDS_RE.search(tok))
+
+
+def _opening_phrases(stream: list[dict], seconds: float) -> list[dict]:
+    """Opening phrases that start within `seconds` (a phrase may end a few words later)."""
+    inside = sum(1 for w in stream if w["s"] < seconds)
+    pool = stream[:inside + 6]
+    joined, starts = "", []
+    for w in pool:
+        if joined:
+            joined += " "
+        starts.append(len(joined))
+        joined += w["tok"]
+    hits, seen = [], set()
+    for family, phrases in OPENING_PHRASES:
+        for phrase in phrases:
+            for m in re.finditer(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", joined, re.I):
+                idx = max(i for i, st in enumerate(starts) if st <= m.start())
+                if idx >= inside or idx in seen:
+                    continue
+                seen.add(idx)
+                hits.append({"family": family, "phrase": m.group(0), "start_s": round(pool[idx]["s"], 1),
+                             "loc": pool[idx]["loc"], "_idx": idx})
+    hits.sort(key=lambda h: h.pop("_idx"))
+    return hits
+
+
+def intro_position(text: str, wpm: float) -> dict | None:
+    """Where the first intro/brand marker sits, in spoken words and estimated seconds. Table and note lines are
+    skipped, so a change table that mentions [INTRO] does not count."""
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if not line.lstrip().startswith(("|", ">")):
+            m = INTRO_MARK_RE.search(line)
+            if m:
+                words = sum(s["words"] for s in sentences_of(text[:offset + m.start()]))
+                return {"marker": m.group(0), "words_before": words, "start_s": round(words / wpm * 60.0, 1)}
+        offset += len(line)
+    return None
+
+
+def opening_checks(text: str, sentences: list[dict], wpm: float) -> dict:
+    stream = _timed_stream(sentences, wpm)
+    warnings = []
+
+    def warn(code: str, message: str, **extra) -> None:
+        warnings.append(dict({"code": code, "message": message}, **extra))
+
+    for h in _opening_phrases(stream, KNOWN_WINDOW_S):
+        warn("opening_phrase", f"\"{h['phrase']}\" at ~{h['start_s']:.0f} s ({h['loc']}): "
+             f"{OPENING_ADVICE[h['family']]}; keep it out of the first ~{KNOWN_WINDOW_S:.0f} s",
+             family=h["family"], phrase=h["phrase"], loc=h["loc"], start_s=h["start_s"])
+    if stream and _norm_token(stream[0]["tok"]) == "imagine":
+        warn("imagine_opener", "opens with \"Imagine\": open on the real thing instead", loc=stream[0]["loc"])
+
+    window = [w for w in stream if w["s"] < NUMBER_WINDOW_S]
+    first_number = next((w for w in stream if _is_number_token(w["tok"])), None)
+    first_number_s = round(first_number["s"], 1) if first_number else None
+    has_number = first_number is not None and first_number["s"] < NUMBER_WINDOW_S
+    if stream and not has_number:
+        later = f"; the first one comes at ~{first_number_s:.0f} s" if first_number else ""
+        warn("no_number", f"no concrete number in the first ~{NUMBER_WINDOW_S:.0f} s{later}")
+
+    first_words = sentences[0]["words"] if sentences else 0
+    if first_words > FIRST_SENTENCE_MAX:
+        warn("long_first_sentence", f"first sentence has {first_words} words (aim for {FIRST_SENTENCE_MAX} or fewer)",
+             loc=sentences[0]["loc"])
+
+    beat, beat_words = [], 0
+    for s in sentences:
+        beat.append(s["text"])
+        beat_words += s["words"]
+        if beat_words >= FIRST_BEAT_WORDS:
+            break
+    m = THIS_VIDEO_RE.search(" ".join(beat))
+    if m:
+        warn("this_video", f"\"{m.group(0)}\" in the first sentence: show the result first, describe the video later",
+             loc=sentences[0]["loc"])
+
+    intro = intro_position(text, wpm)
+    if intro and intro["start_s"] > INTRO_LATE_S:
+        warn("late_intro", f"intro marker {intro['marker']} at ~{intro['start_s']:.0f} s "
+             f"(aim for ~{INTRO_TARGET_S:.0f} s)", start_s=intro["start_s"])
+
+    triangle = {
+        "proper_noun": any(not w["first"] and _is_proper(w["tok"]) for w in window),
+        "concrete_object": bool(CONCRETE_OBJECT_RE.search(" ".join(w["tok"] for w in window))),
+        "number": has_number,
+    }
+    missing = [name.replace("_", " ") for name in ("proper_noun", "concrete_object") if not triangle[name]]
+    if window and missing:  # the number leg is the no_number warning above
+        warn("triangle", f"opening triangle incomplete in the first ~{NUMBER_WINDOW_S:.0f} s: no "
+             + " and no ".join(missing))
+
+    return {"first_sentence_words": first_words, "first_number_s": first_number_s, "triangle": triangle,
+            "intro": intro, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Visual triggers
+# ---------------------------------------------------------------------------------------------------------------
+
+def trigger_norm(word: str) -> str:
+    """Lower case, keep letters, digits, $, % and -; drop everything else (apostrophes too: "it's" -> "its")."""
+    return re.sub(r"[^\w$%-]", "", word.replace("’", "'").casefold()).replace("_", "")
+
+
+def _para_number(pid: str) -> int:
+    return int(pid.strip().upper().lstrip("P"))
+
+
+def load_triggers(path: Path) -> list[dict]:
+    """Read a trigger file (JSON list or plain lines). Raises ValueError with a readable message."""
+    text = path.read_text(encoding="utf-8-sig")
+    items = []
+    if text.strip()[:1] in "[{":
+        data = json.loads(text)
+        if isinstance(data, dict):
+            data = data.get("triggers")
+        if not isinstance(data, list):
+            raise ValueError('expected a JSON list of triggers (or {"triggers": [...]})')
+        for n, item in enumerate(data, 1):
+            if isinstance(item, str):
+                item = {"word": item}
+            if not isinstance(item, dict) or not str(item.get("word") or "").strip():
+                raise ValueError(f'trigger {n}: needs a "word"')
+            nth = item.get("nth", 0)
+            if isinstance(nth, bool) or not isinstance(nth, int) or nth < 0:
+                raise ValueError(f'trigger {n}: "nth" must be a whole number from 0')
+            para = item.get("paragraph")
+            if para is not None and not re.fullmatch(r"[Pp]?\d+", str(para).strip()):
+                raise ValueError(f'trigger {n}: "paragraph" must look like P05')
+            items.append({"word": str(item["word"]).strip(), "nth": nth,
+                          "paragraph": f"P{_para_number(str(para)):02d}" if para is not None else None, "entry": n})
+    else:
+        for n, raw in enumerate(text.splitlines(), 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            para = None
+            if len(parts) > 1 and re.fullmatch(r"[Pp]\d+", parts[0]):
+                para = f"P{_para_number(parts.pop(0)):02d}"
+            nth = 0
+            if len(parts) > 1 and parts[-1].isdigit():
+                nth = int(parts.pop())
+            items.append({"word": " ".join(parts), "nth": nth, "paragraph": para, "entry": n})
+    for it in items:
+        if not any(trigger_norm(w) for w in it["word"].split()):
+            raise ValueError(f"trigger {it['entry']}: \"{it['word']}\" has no letters or digits")
+    return items
+
+
+def check_triggers(text: str, triggers: list[dict]) -> dict:
+    """Each trigger's word (or words) must occur more than `nth` times in its paragraph (or the whole script)."""
+    whole: list[str] = []
+    by_para: dict[int, list[str]] = {}
+    for p in paragraphs(text):
+        toks = [x for x in (trigger_norm(t) for _, piece in p["pieces"] for t in piece.split()) if x]
+        whole += toks
+        if p["id"]:
+            by_para.setdefault(_para_number(p["id"]), []).extend(toks)
+    missing = []
+    for t in triggers:
+        target = [x for x in (trigger_norm(w) for w in t["word"].split()) if x]
+        pool = whole if t["paragraph"] is None else by_para.get(_para_number(t["paragraph"]), [])
+        found = sum(1 for i in range(len(pool) - len(target) + 1) if pool[i:i + len(target)] == target)
+        if found <= t["nth"]:
+            missing.append({"word": t["word"], "nth": t["nth"], "paragraph": t["paragraph"], "found": found})
+    return {"total": len(triggers), "missing": missing, "passed": not missing}
+
+
+def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[str] | None = None,
+         triggers: list[dict] | None = None) -> dict:
     allow = {a.strip().lower() for a in (allow or set()) if a.strip()}
     sents = sentences_of(text)
     words = sum(s["words"] for s in sents)
@@ -381,6 +689,7 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
             dashes.append({"loc": s["loc"], "line": s["line"], "char": m.group(0).strip()})
     exclamations = [{"loc": s["loc"], "line": s["line"]} for s in sents for _ in range(s["text"].count("!"))]
     vocab = find_vocab(sents, allow)
+    vague = find_vague(sents, allow)
     result = {
         "words": words,
         "wpm": wpm,
@@ -393,6 +702,7 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
                            for s in sents if s["words"] > LONG_SENTENCE],
         "repeated_openings": repeated_openings(sents),
         "ai_vocabulary": vocab,
+        "vague_attributions": vague,
         "setup_phrases": find_phrases(sents, SETUP_PHRASES),
         "contrasts": find_contrasts(paras),
         "dashes": dashes,
@@ -403,6 +713,8 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
         "opening_5s": opening_words(sents, wpm),
         "final_sentence": sents[-1]["text"] if sents else "",
         "phrase": phrase_timing(sents, phrase, wpm) if phrase else None,
+        "opening": opening_checks(text, sents, wpm),
+        "triggers": check_triggers(text, triggers) if triggers is not None else None,
     }
     reasons = []
     if result["long_sentences"]:
@@ -411,10 +723,16 @@ def lint(text: str, wpm: float = 155.0, phrase: str | None = None, allow: set[st
     blocked = [h for h in vocab if not h["allowed"]]
     if blocked:
         reasons.append(f"{len(blocked)} AI-vocabulary hit{'s' if len(blocked) != 1 else ''}")
+    unsourced = [h for h in vague if not h["allowed"] and not h["named_source"]]
+    if unsourced:
+        reasons.append(f"{len(unsourced)} vague attribution{'s' if len(unsourced) != 1 else ''} without a source")
     ph = result["phrase"]
     if ph is not None and not ph["within_limit"]:
         reasons.append("phrase not found" if not ph["found"] else
                        f"phrase starts at ~{ph['start_s']:.0f} s (limit {PHRASE_LIMIT_S:.0f} s)")
+    tr = result["triggers"]
+    if tr is not None and not tr["passed"]:
+        reasons.append(f"{len(tr['missing'])} of {tr['total']} visual triggers missing")
     result["gate_reasons"] = reasons
     return result
 
@@ -454,6 +772,11 @@ def print_human(path: str, r: dict, gate: bool) -> None:
     vocab = r["ai_vocabulary"]
     shown = [dict(h, match=h["match"] + (" (allowed)" if h["allowed"] else "")) for h in vocab]
     print(f"  AI vocabulary: {len(vocab)}" + (" -> " + _locs(shown, "match") if vocab else ""))
+    vague = [dict(h, match=h["match"] + (" (allowed)" if h["allowed"] else ""))
+             for h in r["vague_attributions"] if not h["named_source"]]
+    named = len(r["vague_attributions"]) - len(vague)
+    print(f"  Vague attributions without a source: {len(vague)}" + (" -> " + _locs(vague, "match") if vague else "")
+          + (f" ({named} with a named source not counted)" if named else ""))
     print(f"  Setup phrases: {len(r['setup_phrases'])}"
           + (" -> " + _locs(r["setup_phrases"], "match") if r["setup_phrases"] else ""))
     print(f"  Not-X-but-Y contrasts: {len(r['contrasts'])}"
@@ -474,8 +797,22 @@ def print_human(path: str, r: dict, gate: bool) -> None:
             verdict = "within" if ph["within_limit"] else "AFTER"
             print(f"  Phrase \"{ph['phrase']}\": starts at word {ph['word_index']}, ~{ph['start_s']:.0f} s "
                   f"({verdict} {PHRASE_LIMIT_S:.0f} s)")
+    op = r["opening"]
+    first_number = (f"first number at ~{op['first_number_s']:.0f} s" if op["first_number_s"] is not None
+                    else "no number spoken")
+    print(f"Opening checks ({first_number}; warnings, not a gate): {len(op['warnings'])}")
+    for w in op["warnings"]:
+        print(f"  WARN {w['message']}")
     print(f"First {OPENING_S:.0f} seconds: \"{r['opening_5s']}\"")
     print(f"Final sentence: \"{r['final_sentence']}\"")
+    tr = r["triggers"]
+    if tr is not None:
+        for t in tr["missing"]:
+            where = t["paragraph"] or "script"
+            print(f"  MISSING trigger {where} \"{t['word']}\" #{t['nth']} (found {t['found']} time"
+                  f"{'s' if t['found'] != 1 else ''})")
+        print(f"TRIGGERS: {'PASS' if tr['passed'] else 'FAIL'} - {tr['total'] - len(tr['missing'])} of "
+              f"{tr['total']} found")
     print(GUIDE_LINE)
     if gate:
         if r["gate_reasons"]:
@@ -490,8 +827,12 @@ def main(argv=None) -> int:
     ap.add_argument("--wpm", type=float, default=155.0, help="speaking rate in words per minute (default 155)")
     ap.add_argument("--phrase", help="search phrase that should be spoken within the first 30 seconds")
     ap.add_argument("--gate", action="store_true",
-                    help="exit 1 on a sentence over 30 words, an AI-vocabulary hit or a late phrase")
-    ap.add_argument("--allow", default="", help="AI-vocabulary terms to accept, comma-separated")
+                    help="exit 1 on a sentence over 30 words, an AI-vocabulary hit, an unsourced vague attribution "
+                         "or a late phrase")
+    ap.add_argument("--allow", default="",
+                    help="AI-vocabulary or vague-attribution terms to accept, comma-separated")
+    ap.add_argument("--triggers", help="words on-screen animations are keyed to (JSON or plain lines); "
+                                       "exit 1 if one is missing")
     ap.add_argument("--json", action="store_true", help="print a machine-readable result")
     ap.add_argument("--out", help="also write the JSON result to this file")
     try:
@@ -510,8 +851,20 @@ def main(argv=None) -> int:
     except (OSError, UnicodeDecodeError) as exc:
         print(f"error: cannot read {path}: {exc}", file=sys.stderr)
         return 2
-    r = lint(text, args.wpm, args.phrase, set(args.allow.split(",")))
+    triggers = None
+    if args.triggers:
+        try:
+            triggers = load_triggers(Path(args.triggers))
+        except FileNotFoundError:
+            print(f"error: trigger file not found: {args.triggers}", file=sys.stderr)
+            return 2
+        except (OSError, UnicodeDecodeError, ValueError) as exc:  # json.JSONDecodeError is a ValueError
+            print(f"error: cannot read trigger file {args.triggers}: {exc}", file=sys.stderr)
+            return 2
+    r = lint(text, args.wpm, args.phrase, set(args.allow.split(",")), triggers)
     r["file"] = str(path)
+    if r["triggers"] is not None:
+        r["triggers"]["file"] = str(args.triggers)
     r["gate"] = {"enabled": args.gate, "passed": not r["gate_reasons"], "reasons": r["gate_reasons"]}
     r["note"] = GUIDE_LINE
     if args.out:
@@ -526,7 +879,8 @@ def main(argv=None) -> int:
         print(json.dumps(r, ensure_ascii=False, indent=2))
     else:
         print_human(str(path), r, args.gate)
-    return 1 if args.gate and r["gate_reasons"] else 0
+    triggers_failed = r["triggers"] is not None and not r["triggers"]["passed"]
+    return 1 if (args.gate and r["gate_reasons"]) or triggers_failed else 0
 
 
 if __name__ == "__main__":

@@ -23,8 +23,7 @@ One folder per video. Create it first:
 
 ## The creator's tools
 
-Before the first video, run the `setup` skill once. It detects what the creator has (Remotion, HyperFrames, Wan,
-CosyVoice, Codex, a GPU), asks about subscriptions such as ElevenLabs, and saves the choices in
+Before the first video, run the `setup` skill once; it saves the creator's tools and subscriptions in
 `~/.tubecrew/stack.json`. At every station, use the tool chosen there instead of guessing. If the file is missing,
 run `setup` first.
 
@@ -32,18 +31,18 @@ run `setup` first.
 
 | # | Station | Skill / agent | Gate (do not move on until) |
 |---|---|---|---|
-| 1 | Topic | `find-topic`, then the `topic-skeptic` agent | at least one candidate is ALIVE with evidence |
+| 1 | Topic | `find-topic` (`demand.py` for demand), then the `topic-skeptic` agent | at least one candidate is ALIVE with evidence |
 | 2 | Research | `research-facts` | `facts_check.py facts.json` exits 0 |
 | 3 | Script | `write-script`, then the `script-auditor` agent | lint gate passes, A/B verdict merged |
 | 4 | Number check | `facts_check.py --script`, the `fact-checker` agent, and Codex when the stack's `verifier` is `codex` | 0 unsourced numbers, every checker PASS |
 | 5 | First slice | you + the creator | the creator approved the first 60-90 seconds |
 | 6 | Voiceover | the stack's `voice` (ElevenLabs, CosyVoice or a recording), then `check-voiceover` | `voice_check.py` exits 0 |
 | 7 | Visuals and edit | the stack's `motion` engine (Remotion, HyperFrames or `morph-clips`) and `clips` (Wan) | text on screen follows the dose rule below |
-| 8 | Render check | `check-render`, then the `render-auditor` agent | `render-check.json` PASS and `RENDER-AUDIT` PASS for the same file |
-| 9 | Package | title, thumbnail, description into `upload.json` | thumbnail text does not repeat the title |
-| 10 | Upload | the `upload-checker` agent, then `upload-private` | `UPLOAD-GATE` GO, uploaded as **private** |
-| 11 | Publish | the creator, in YouTube Studio | a human pressed publish |
-| 12 | Learn | `retention-by-scene` after 3+ days | one lesson written down |
+| 8 | Render check | `check-render` (mix with `normalize_audio.py`), then the `render-auditor` agent | `render-check.json` PASS and `RENDER-AUDIT` PASS for the same file |
+| 9 | Package | title, description, `check-thumbnail`, optional `localize` for other languages | `thumbnail-check.json` PASS; thumbnail text does not repeat the title |
+| 10 | Upload | the `upload-checker` agent, then `upload-private` | `UPLOAD-GATE` GO, uploaded as **private** (scheduled only with `--schedule`) |
+| 11 | Publish | the creator, in YouTube Studio | a human pressed publish or chose the schedule |
+| 12 | Learn | `channel-pulse` weekly, `retention-by-scene` after 72 h | one lesson in `lessons.md`; due `decisions.md` rows filled from tool output |
 
 Station 5 exists because the most expensive mistake is a whole video built on an opening nobody liked. Render
 or mock the first 60-90 seconds and ask before you build the rest.
@@ -60,17 +59,19 @@ or mock the first 60-90 seconds and ask before you build the rest.
 - **On-screen text is punctuation.** Full-screen text cards stay under ~20% of the runtime, never two in a row,
   and never repeat what the narration is saying. Big text is for the hook question, a chapter turn, or the one
   number to remember.
-- **Nothing publishes itself.** Uploads are private. Publishing, scheduling and anything irreversible is the
-  creator's click.
+- **Nothing publishes itself.** Uploads are private. Publishing, and anything irreversible, is the creator's
+  decision; a schedule is used only when the creator writes `publish_at` and passes `--schedule`.
 - **No automated engagement on your own videos.** No script or browser agent watches, likes or comments on
   your public videos. Fake engagement breaks YouTube's rules and can cost the monetization account that all of
   the creator's channels share.
 
 ## Lessons become checks
 
-Keep a `Lessons` section in the channel's `CLAUDE.md`. After every mistake, add one line: what happened and how
-it is now caught. When the same lesson shows up twice, turn it into a script check instead of a longer rule.
-When a check has caught nothing for a month, ask whether it is still worth its time.
+Copy this skill's `templates/` into the channel folder (`decisions.md`, `lessons.md`, `gate-counter.md`) and follow
+`references/learning-loop.md`. Lessons are numbered and append-only; check for duplicates before adding one. At the
+start of each video, put the lessons that apply into `<video>/preflight.md`. When the same lesson shows up twice,
+turn it into a script check instead of a longer rule. Log every real catch in `gate-counter.md`; after a month, a
+code gate that caught nothing is loosened and an agent gate that caught nothing is removed. The creator decides.
 
 ## What to report back
 

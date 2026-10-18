@@ -24,11 +24,15 @@ Credentials: `~/.tubecrew/client_secret.json` and `~/.tubecrew/tokens/<profile>-
 (scopes yt-analytics.readonly + youtube.readonly); `TUBECREW_HOME` moves the folder. Needs
 `pip install google-auth google-auth-oauthlib requests`.
 
+Minimum sample: a video younger than 72 hours or with fewer than 100 engaged views is "too early to judge". The
+script then prints that, and when to come back, instead of the report, because a curve from a handful of viewers
+turns noise into lessons. `--anyway` prints the full report with a NOT JUDGED banner (`"judged": false` in JSON).
+
 Read-only: it never writes to YouTube, never saves a refreshed token, and writes a file only with `--out`
 (JSON when the name ends in .json, the text report otherwise); that file holds no absolute paths.
 
-Exit codes: 0 report printed, or no retention data yet; 2 usage, credential or API error. There is no gate here,
-so it never exits 1.
+Exit codes: 0 report printed, too early to judge, or no retention data yet; 2 usage, credential or API error.
+There is no gate here, so it never exits 1.
 """
 from __future__ import annotations
 
@@ -48,6 +52,8 @@ BUMP_MIN_PP = 0.5
 BUMPS_SHOWN = 5  # the human report lists the biggest few; on a small video most small rises are one or two viewers
 WINDOW_S = 30.0
 QUOTE_MARGIN_S = 3.0
+MIN_AGE_HOURS = 72          # the first three days swing a lot; the same guard as channel-pulse
+MIN_ENGAGED_VIEWS = 100     # under 100 engaged views one viewer moves the curve by a point or more: noise, not lessons
 
 ANALYTICS_SCOPES = ["https://www.googleapis.com/auth/yt-analytics.readonly",
                     "https://www.googleapis.com/auth/youtube.readonly"]
@@ -335,8 +341,43 @@ def totals_from_report(report: dict) -> dict:
         except (ValueError, IndexError):
             return None
 
-    return {"views": get("views"), "average_view_duration_s": get("averageViewDuration"),
+    return {"views": get("views"), "engaged_views": get("engagedViews"),
+            "average_view_duration_s": get("averageViewDuration"),
             "average_view_percentage": get("averageViewPercentage")}
+
+
+def hours_since(published_at, now: dt.datetime) -> Optional[float]:
+    """Hours from a Data API `publishedAt` (`2026-10-01T12:00:00Z`) to `now` (aware UTC); None when unreadable."""
+    text = str(published_at or "").strip().replace("Z", "+00:00")
+    # Python 3.9's fromisoformat takes only 3 or 6 fraction digits
+    text = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], text, count=1)
+    try:
+        t = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    t = t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+    return (now - t).total_seconds() / 3600
+
+
+def sample_guard(age_hours: Optional[float], engaged: Optional[float]) -> Optional[dict]:
+    """None when the video can be judged; otherwise {"reason": "age" | "sample", "message"}.
+
+    `engaged` is engagedViews (views when the API did not return it). Pass None to check the age alone.
+    """
+    if age_hours is None or age_hours < MIN_AGE_HOURS:
+        shown = "an unknown number of" if age_hours is None else f"{age_hours:.0f}"
+        return {"reason": "age", "message": f"Too early to judge: the video is {shown} hours old. Retention says "
+                                            f"something only after {MIN_AGE_HOURS} hours and {MIN_ENGAGED_VIEWS} "
+                                            "engaged views; do not write a lesson from it yet."}
+    if engaged is not None and engaged < MIN_ENGAGED_VIEWS:
+        return {"reason": "sample", "message": f"Too early to judge: {int(engaged)} engaged views (needs "
+                                               f"{MIN_ENGAGED_VIEWS}). With fewer, one viewer moves the curve by a "
+                                               "point or more; do not write a lesson from it yet."}
+    return None
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
 
 
 def analyze(video_id: str, video: dict, curve_report: dict, totals_report: dict, sections: list,
@@ -388,7 +429,10 @@ def _int(value) -> Optional[int]:
 
 
 def render_text(r: dict) -> str:
-    lines = [f"Retention: \"{r['title']}\" ({r['video_id']})",
+    lines = []
+    if r.get("judged") is False:
+        lines += [f"NOT JUDGED (--anyway): {r.get('guard', '')}", ""]
+    lines += [f"Retention: \"{r['title']}\" ({r['video_id']})",
              f"published {r['published'] or '?'}, duration {fmt_time(r['duration_s'])}, Data API views "
              f"{r['views_data_api'] if r['views_data_api'] is not None else '?'}"]
     a = r["analytics"]
@@ -452,7 +496,13 @@ def token_path(profile: str) -> Path:
 
 
 def login_command(profile: str) -> str:
-    script = sys.argv[0] if sys.argv and sys.argv[0].endswith(".py") else "retention.py"
+    """The login command to suggest. Never an absolute path: it can land in reports that get shared."""
+    script = "retention.py"
+    if sys.argv and sys.argv[0].endswith(".py"):
+        try:
+            script = Path(sys.argv[0]).resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except ValueError:
+            script = Path(sys.argv[0]).name
     return f'python "{script}" --login --profile {profile}'
 
 
@@ -529,7 +579,7 @@ def fetch_curve(session, token: str, video_id: str, start: str, end: str) -> dic
 def fetch_totals(session, token: str, video_id: str, start: str, end: str) -> dict:
     return _get(session, token, ANALYTICS_API,
                 {"ids": "channel==MINE", "startDate": start, "endDate": end, "filters": f"video=={video_id}",
-                 "metrics": "views,averageViewDuration,averageViewPercentage"})
+                 "metrics": "views,engagedViews,averageViewDuration,averageViewPercentage"})
 
 
 def do_login(profile: str) -> int:
@@ -562,6 +612,25 @@ def do_login(profile: str) -> int:
 
 # --- main ---------------------------------------------------------------------------------------------------------
 
+def _print_too_early(video_id: str, video: dict, age_hours: Optional[float], engaged: Optional[int], guard: dict,
+                     as_json: bool) -> int:
+    """The minimum-sample answer: what is missing and when to come back, instead of a report. Exit 0 (no gate)."""
+    snippet = video.get("snippet") or {}
+    come_back = None
+    if guard["reason"] == "age" and age_hours is not None:
+        come_back = (_now() + dt.timedelta(hours=MIN_AGE_HOURS - age_hours)).date().isoformat()
+    out = {"video_id": video_id, "title": snippet.get("title", ""), "published": (snippet.get("publishedAt") or "")[:10],
+           "age_hours": None if age_hours is None else round(age_hours, 1), "engaged_views": engaged,
+           "judged": False, "reason": guard["reason"], "message": guard["message"], "come_back_after": come_back}
+    if as_json:
+        print(json.dumps(out, ensure_ascii=False))
+    else:
+        print(f"\"{out['title']}\" ({video_id})\n{guard['message']}"
+              + (f" Come back after {come_back}." if come_back else " Run it again when it has more views.")
+              + "\n(--anyway prints the report anyway, marked NOT JUDGED.)")
+    return 0
+
+
 def _write_out(path: Path, report: dict, as_json: bool) -> None:
     text = json.dumps(report, ensure_ascii=False, indent=2) + "\n" if as_json else render_text(report)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -584,6 +653,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--json", action="store_true", help="print the machine-readable report")
     ap.add_argument("--out", type=Path, help="also write the report here (.json = JSON, otherwise text)")
     ap.add_argument("--login", action="store_true", help="open the browser once to authorize this profile")
+    ap.add_argument("--anyway", action="store_true", help=f"report even under {MIN_AGE_HOURS} h or "
+                                                          f"{MIN_ENGAGED_VIEWS} engaged views (marked NOT JUDGED)")
     a = ap.parse_args(argv)
 
     def usage(message: str) -> int:
@@ -621,6 +692,10 @@ def main(argv: Optional[list] = None) -> int:
             video = fetch_video_info(session, cred.token, a.video_id)
             if video is None:
                 return usage(f"video {a.video_id} not found, or not visible to this account")
+            age = hours_since((video.get("snippet") or {}).get("publishedAt"), _now())
+            guard = sample_guard(age, None)
+            if guard and not a.anyway:
+                return _print_too_early(a.video_id, video, age, None, guard, a.json)
             today = dt.date.today().isoformat()
             start = min(analytics_start((video.get("snippet") or {}).get("publishedAt")) or today, today)
             curve = fetch_curve(session, cred.token, a.video_id, start, today)
@@ -631,6 +706,11 @@ def main(argv: Optional[list] = None) -> int:
                     print(NO_DATA)
                 return 0
             totals = fetch_totals(session, cred.token, a.video_id, start, today)
+            counted = totals_from_report(totals)
+            engaged = _int(counted["engaged_views"] if counted["engaged_views"] is not None else counted["views"])
+            guard = guard or sample_guard(age, engaged)
+            if guard and not a.anyway:
+                return _print_too_early(a.video_id, video, age, engaged, guard, a.json)
         except ApiError as e:
             return usage(str(e))
         except OSError as e:
@@ -650,6 +730,9 @@ def main(argv: Optional[list] = None) -> int:
             sections, source = fixed_windows(duration), "fixed 30 s windows"
         report = analyze(a.video_id, video, curve, totals, sections, source, cues)
         report["data"] = True
+        report["judged"] = guard is None
+        if guard:
+            report["guard"] = guard["message"]
     except EnvError as e:
         return usage(str(e))
 

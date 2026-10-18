@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.3.0 - 2026-10-18
+
+New skills
+- `check-thumbnail` and `thumb_check.py`: a code gate for format, 16:9, size, empty dark area, clutter, text rules
+  and title repetition, plus a feed-size preview (210, 320 and 630 px) to compare candidates side by side.
+- `localize` and `dub_fit.py`: meaning-first translation that keeps every number from `facts.json`, a
+  native-listener audit, the voice from the stack's `dubbing` station, and a check that every dubbed paragraph fits
+  the original timing (at most 1.25x speed-up, at most 4 s drift).
+- `channel-pulse` and `pulse.py`: a channel check from your own Analytics (recent videos, traffic and discovery
+  share, search terms, tested-and-cut or never-tested patterns, audience only above privacy thresholds) that ends in
+  one diagnosis and writes `pulse-<date>.json`.
+
+Gates
+- `render_check.py`: a hook motion band that fails a slow zoom on a still image (which freezedetect misses),
+  `--profile animated|live`, still pictures of 3 s or more fail in animated videos, subtitle cues checked against
+  the spoken words (`--words`, systematic drift reported once), a freshness warning, and hash-bound
+  `qa/RENDER-EXEMPTION-*.md` files for a check that is wrong for one video.
+- New `text_dose.py` (OCR text-card gate, optional `rapidocr-onnxruntime`) and `normalize_audio.py` (two-pass
+  loudnorm to -14 LUFS, video stream copied, reports a silent fallback to dynamic mode).
+- `voice_check.py`: accuracy, fidelity and words per minute for every paragraph; repeat loops and swallowed
+  sentences fail; Whisper runs with `condition_on_previous_text=False` so it stops inventing words at seams. Paragraph
+  ids (`P01`) are labels, not words the voice must say.
+- New `pick_takes.py` (best take per paragraph; numbers and names must be heard exactly) and `trim_silence.py`
+  (caps long pauses without stretching speech), plus `check-voiceover/references/failure-modes.md`.
+- `script_lint.py`: opening warnings (late number, long first sentence, "in this video", throat-clearing openers),
+  a gate on vague attributions without a source, and `--triggers` so word-timed animations survive a rewrite.
+- New `demand.py` (free, no keys): YouTube suggestions with intent flags, a reachable step in the search results
+  (a recent video from a channel under 50k subscribers with 10k+ views), and Wikipedia pageviews as a multiple of a
+  proven topic; two sources more than 3x apart are labelled "demand unclear".
+- `outliers.py` flags likes under 0.35% of views as "possibly ad-pushed: not evidence"; `facts_check.py` adds a
+  `market` type that needs a dated session or time zone.
+
+Upload
+- `upload.py`: a project lock, a same-title check against the channel's recent uploads (and a warning for empty
+  records left by a dropped upload), a strict UTF-8 and U+FFFD gate, translated titles and descriptions
+  (`default_language`, `localizations`), a tag-weight warning above 460, and no query strings in error messages.
+- Opt-in scheduling: `publish_at` in `upload.json` is used only with `--schedule`; the video stays private with a
+  publish time, and the status is read back to confirm it.
+- Login health: `--check-token`, an issue and expiry record next to the token, a 48-hour warning in the dry run,
+  and a wrong-channel login refused before the token is saved.
+- Opt-in publish guard (`setup/scripts/publish_guard.py`): a Claude Code hook that asks the creator before upload
+  and publish commands, and refuses them when nobody is there to answer.
+
+Reviews and the learning loop
+- `topic-skeptic`: saturation threshold, evidence caps, at most two rounds and always one recommendation.
+  `fact-checker`: rounded parts must add up, labels apply only to their own item, closing prices from the exchange.
+  `script-auditor`: once audio or a translation exists, B wins only for a strong pattern or a meaning problem.
+  `render-auditor`: exemption files, an empty-frame scan, heavy scans only on the final render. `upload-checker`:
+  token liveness, translation equivalence, schedule sanity.
+- `find-topic`: calendar-event and search-pattern candidates, durability tags, the two-question gate and a check of
+  the evidence video's first 60 seconds.
+- `produce-video`: a decisions ledger with T+30 and T+90 rows, numbered lessons, a gate counter and per-video
+  preflight lists (templates in `skills/produce-video/templates/`). `retention-by-scene` says "too early to judge"
+  under 72 hours or 100 engaged views (`--anyway` to override).
+- `setup` detects the optional OCR package and offers the publish guard.
+
 ## 0.2.0 - 2026-10-18
 
 - New `setup` skill and `detect_stack.py`: detect the creator's tools (Remotion, HyperFrames, Wan with ComfyUI,

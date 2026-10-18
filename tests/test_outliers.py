@@ -229,6 +229,65 @@ def test_main_usage_errors(tmp_path, capsys):
     assert out.main(["--from-json", str(bad)]) == 2
 
 
+def test_like_check_threshold():
+    assert out.like_check(None, 1000) == {} and out.like_check(5, 0) == {}
+    low = out.like_check(30, 10_000)  # 0.3 %
+    assert low == {"likes": 30, "like_view_pct": 0.3, "ad_pushed": True}
+    assert out.like_check(35, 10_000)["ad_pushed"] is False  # exactly 0.35 % is not under it
+    assert out.like_check(400, 10_000)["ad_pushed"] is False
+    assert out.parse_video_engagement({"like_count": 12, "view_count": 3400}) == (12, 3400)
+    assert out.parse_video_engagement({"like_count": None}) == (None, None)
+
+
+def test_catalog_likes_flag_ad_pushed_outliers(tmp_path, capsys):
+    catalog = {"Acme Science": [
+        {"id": "push", "title": "Pushed one", "views": 50_000, "likes": 60},      # 0.12 %
+        {"id": "real", "title": "Organic one", "views": 40_000, "likes": 1_600},  # 4 %
+        {"id": "nolk", "title": "No likes known", "views": 30_000},
+    ] + [{"id": f"x{i}", "title": "", "views": 1_000} for i in range(4)]}
+    outliers, _ = out.find_outliers(catalog, 2.0, TODAY)
+    by_id = {o["id"]: o for o in outliers}
+    assert by_id["push"]["ad_pushed"] is True and by_id["push"]["like_view_pct"] == 0.12
+    assert by_id["real"]["ad_pushed"] is False
+    assert "ad_pushed" not in by_id["nolk"]
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+    assert out.main(["--from-json", str(path)]) == 0
+    text = capsys.readouterr().out
+    assert text.count("possibly ad-pushed: not evidence (likes 0.12% of views") == 1
+    assert "likes checked for 2 of 3 outliers, 1 possibly ad-pushed" in text
+    path.write_text(json.dumps({"C": [{"id": "a", "views": 5, "likes": "12"}]}), encoding="utf-8")
+    assert out.main(["--from-json", str(path)]) == 2
+
+
+def test_flat_entry_like_count_is_kept():
+    data = {"channel": "Acme Science", "entries": [_entry("vid00000009", "Liked", 5000, like_count=40)]}
+    _, videos = out.parse_flat_playlist(data)
+    assert videos[0]["likes"] == 40
+
+
+def test_dates_fetch_reads_likes_without_extra_requests(monkeypatch, capsys, tmp_path):
+    calls = []
+
+    def fake_run_json(cmd, timeout=600):
+        calls.append(cmd)
+        if "--flat-playlist" in cmd:
+            return FLAT
+        return {"upload_date": "20260520", "like_count": 1500, "view_count": 951_234}  # 0.158 %
+
+    monkeypatch.setattr(out, "ytdlp_command", lambda: ["yt-dlp"])
+    monkeypatch.setattr(out, "_run_json", fake_run_json)
+    saved = tmp_path / "catalog.json"
+    rc = out.main(["@acmescience", "--dates", "1", "--json", "--save", str(saved)])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 0 and len(calls) == 2  # one catalog pull, one full read that gives date and likes together
+    top = data["outliers"][0]
+    assert top["ad_pushed"] is True and top["likes"] == 1500 and top["like_view_pct"] == 0.158  # exact views used
+    assert data["ad_push_pct"] == 0.35
+    first = json.loads(saved.read_text(encoding="utf-8"))["Acme Science"][0]
+    assert first["likes"] == 1500 and first["upload_date"] == "2026-05-20"
+
+
 def test_main_live_path_with_fake_ytdlp(monkeypatch, capsys):
     calls = []
 

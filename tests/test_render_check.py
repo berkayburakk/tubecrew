@@ -6,6 +6,7 @@ lavfi sources and skip when ffmpeg/ffprobe are not installed.
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -182,6 +183,15 @@ def test_decode_command_full_and_fast():
     assert "fps=2,scale=160:-2" in fast and "-an" in fast
 
 
+def test_decode_command_motion_branch_goes_to_stdout_at_the_calibrated_sampling():
+    cmd = rc.build_decode_cmd(Path("v.mp4"), True, True, motion=True, video_index=1, audio_index=0)
+    joined = " ".join(cmd)
+    assert "[0:1]split=2" in joined and "[0:0]silencedetect" in joined
+    assert "fps=4,scale=96:54,format=gray[mo]" in joined
+    assert cmd[-7:] == ["-map", "[mo]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"]
+    assert cmd.index("null") < cmd.index("[mo]")      # the null output comes first, the frames last
+
+
 # ------------------------------------------------------------------------------------------- evaluate thresholds
 
 def measured(**overrides):
@@ -242,20 +252,34 @@ def test_black_segments():
     assert statuses(rc.evaluate(measured(black=[[117.0, 120.0]])), "black") == ["FAIL"]
 
 
-def test_freeze_zones():
-    hook = rc.evaluate(measured(freezes=[[0.0, 5.0]]))
-    assert "FAIL" in statuses(hook, "freeze")
-    assert statuses(rc.evaluate(measured(freezes=[[10.0, 12.5]])), "freeze") == ["PASS"]
-    assert statuses(rc.evaluate(measured(freezes=[[60.0, 70.0]])), "freeze") == ["WARN"]
-    assert statuses(rc.evaluate(measured(freezes=[[60.0, 66.0]])), "freeze") == ["PASS"]
-    end = statuses(rc.evaluate(measured(freezes=[[105.0, 120.0]])), "freeze")
-    assert end == ["PASS", "INFO"]
+def test_freeze_zones_live_profile_keeps_the_lenient_body_rule():
+    def live(freezes):
+        return statuses(rc.evaluate(measured(freezes=freezes), profile="live"), "freeze")
+    assert "FAIL" in live([[0.0, 5.0]])
+    assert live([[10.0, 12.5]]) == ["PASS"]
+    assert live([[60.0, 70.0]]) == ["WARN"]
+    assert live([[60.0, 66.0]]) == ["PASS"]
+    assert live([[105.0, 120.0]]) == ["PASS", "INFO"]
+
+
+def test_freeze_zones_animated_profile_fails_three_still_seconds_anywhere_but_the_end_screen():
+    def animated(freezes):
+        return statuses(rc.evaluate(measured(freezes=freezes)), "freeze")
+    assert "FAIL" in animated([[0.0, 5.0]])
+    assert animated([[10.0, 12.5]]) == ["WARN"]          # 2-3 s: borderline
+    assert animated([[60.0, 63.2]]) == ["FAIL"]          # body still for 3 s
+    assert animated([[60.0, 61.9]]) == ["PASS"]
+    assert animated([[105.0, 120.0]]) == ["PASS", "INFO"]   # end screen
+    assert animated([[98.0, 102.0]]) == ["WARN"]     # only the 2 s before the end screen count
 
 
 def test_hook_seconds_option():
     m = measured(freezes=[[50.0, 54.0]])
-    assert "FAIL" in statuses(rc.evaluate(m, hook_seconds=60), "freeze")
-    assert "FAIL" not in statuses(rc.evaluate(m, hook_seconds=45), "freeze")
+    hook = [c for c in rc.evaluate(m, hook_seconds=60) if c["name"] == "freeze"]
+    assert hook[0]["status"] == "FAIL" and "hook must move" in hook[0]["detail"]
+    body = [c for c in rc.evaluate(m, hook_seconds=45) if c["name"] == "freeze"]
+    assert body[0]["status"] == "FAIL" and "in the body" in body[0]["detail"]
+    assert "FAIL" not in statuses(rc.evaluate(m, hook_seconds=45, profile="live"), "freeze")
 
 
 def cue(index, start, end, *lines):
@@ -326,6 +350,11 @@ def test_e2e_moving_clip_passes_and_binds_to_bytes(moving_clip, capsys):
     assert report["measured"]["width"] == 160
     assert str(project) not in report_path.read_text(encoding="utf-8")
     assert "VERDICT: PASS" in out and "qa/render-check.json" in out
+    motion = report["measured"]["motion"]
+    assert motion["size"] == "96x54" and motion["fps"] == 4 and motion["frames"] >= 39
+    assert motion["hook"]["slow_pct"] == 0 and motion["hook"]["frozen_pct"] == 0
+    assert "FAIL" not in statuses(report["checks"], "hook_motion")
+    assert report["measured"]["profile"] == "animated" and report["exemptions"] == []
 
 
 @needs_ffmpeg
@@ -410,3 +439,355 @@ def test_rel_path_outside_project_keeps_only_the_file_name(tmp_path):
 def test_subtitle_file_without_cues_fails():
     checks = rc._check_subtitles({"duration": 60.0}, [])
     assert [(c["name"], c["status"]) for c in checks] == [("subtitle_end", "FAIL")]
+
+
+# ------------------------------------------------------------------------------------------- motion band (pure)
+
+def test_frame_diffs_mean_absolute_difference():
+    size = rc.MOTION_W * rc.MOTION_H
+    raw = bytes([10]) * size + bytes([10]) * size + bytes([40]) * size
+    assert rc.frame_diffs(raw) == [0.0, 30.0]
+    assert rc.frame_diffs(raw + b"\x00" * 7) == [0.0, 30.0]      # a partial trailing frame is ignored
+
+
+def test_still_windows_need_three_seconds():
+    d = [0.0] * 11 + [5.0] + [0.0] * 12      # 2.75 s still (too short), a change, then 3.0 s still
+    assert rc.still_windows(d, 0.15) == [(3.0, 6.0)]
+
+
+def test_motion_summary_definitions():
+    # 40 diffs = 41 frames = 10.25 s: two events, 3.5 s frozen, then 3 s more that is slow but not frozen
+    d = [30.0, 30.0] + [0.05] * 14 + [0.8] * 12 + [5.0] * 12
+    s = rc.motion_summary(d)
+    assert s["duration_s"] == pytest.approx(10.2, abs=0.06)
+    assert s["events_per_min"] == pytest.approx(11.7)
+    assert s["frozen_pct"] == pytest.approx(34.1)
+    assert s["slow_pct"] == pytest.approx(63.4)
+    assert s["median_diff"] == 0.8
+    assert s["slow_windows"] == [[0.5, 7.0]]
+    assert rc.motion_summary([]) is None
+
+
+def test_motion_report_slices_the_hook():
+    d = [5.0] * 39 + [0.05] * 40          # moving for the first 10 s, still for the next 10 s
+    rep = rc.motion_report(d, hook_seconds=10)
+    assert rep["frames"] == 80
+    assert rep["hook"]["slow_pct"] == 0 and rep["hook"]["duration_s"] == 10.0
+    assert rep["video"]["frozen_pct"] == pytest.approx(50.0)
+    assert rc.motion_report(d, hook_seconds=0)["hook"] is None
+
+
+def motion_measured(hook, video=None, **overrides):
+    return measured(motion={"fps": 4, "size": "96x54", "frames": 400, "hook": hook, "video": video}, **overrides)
+
+
+def summary(events=45.0, frozen=0.0, slow=0.0, windows=()):
+    return {"duration_s": 45.0, "events_per_min": events, "median_diff": 4.0, "frozen_pct": frozen,
+            "slow_pct": slow, "slow_windows": [list(w) for w in windows]}
+
+
+def test_hook_motion_band():
+    assert statuses(rc.evaluate(motion_measured(summary())), "hook_motion") == ["PASS"]
+    slow = [c for c in rc.evaluate(motion_measured(summary(slow=8.9, windows=[(4.0, 8.0)])))
+            if c["name"] == "hook_motion"]
+    assert slow[0]["status"] == "FAIL" and (slow[0]["start"], slow[0]["end"]) == (4.0, 8.0)
+    assert statuses(rc.evaluate(motion_measured(summary(frozen=3.0, slow=3.0))), "hook_motion") == ["FAIL"]
+    # few events depends on the genre: a warning, not a failure
+    assert statuses(rc.evaluate(motion_measured(summary(events=12.0))), "hook_motion") == ["WARN"]
+    live = rc.evaluate(motion_measured(summary(slow=50.0)), profile="live")
+    assert statuses(live, "hook_motion") == ["WARN"] and rc.verdict_of(live) == "PASS"
+
+
+def test_hook_motion_not_measurable_warns():
+    assert statuses(rc.evaluate(motion_measured(None)), "hook_motion") == ["WARN"]
+
+
+def test_motion_band_is_configurable():
+    calm = {"min_events": 10.0, "max_frozen": 5.0, "max_slow": 12.0}
+    checks = rc.evaluate(motion_measured(summary(events=12.0, slow=8.9)), band=calm)
+    assert statuses(checks, "hook_motion") == ["PASS"]
+    assert rc.parse_band("20,2.2,8") == {"min_events": 20.0, "max_frozen": 2.2, "max_slow": 8.0}
+    for bad in ("20,2.2", "a,b,c", "20,-1,8"):
+        with pytest.raises(rc.UsageError):
+            rc.parse_band(bad)
+
+
+def test_whole_video_motion_warns_in_animated_and_informs_in_live():
+    video = summary(events=12.0, frozen=10.0, slow=30.0, windows=[(60.0, 66.5)])
+    animated = [c for c in rc.evaluate(motion_measured(summary(), video)) if c["name"] == "motion"]
+    assert animated[0]["status"] == "WARN" and "01:00.0-01:06.5" in animated[0]["detail"]
+    assert statuses(rc.evaluate(motion_measured(summary(), video), profile="live"), "motion") == ["INFO"]
+    assert statuses(rc.evaluate(motion_measured(summary(), summary())), "motion") == ["INFO"]
+
+
+# ------------------------------------------------------------------------------------------- subtitles vs words
+
+def words_of(*items):
+    return [{"w": w, "s": s, "e": e} for w, s, e in items]
+
+
+SPOKEN = words_of(("The", 1.0, 1.2), ("company", 1.2, 1.7), ("made", 1.7, 2.0), ("money.", 2.0, 2.6),
+                  ("Then", 3.0, 3.3), ("it", 3.3, 3.4), ("stopped.", 3.4, 4.0))
+
+
+def test_parse_words_accepts_whisper_segments_word_lists_and_short_keys():
+    whisper = {"segments": [{"start": 0, "end": 1, "text": " Hello there", "words": [
+        {"word": " Hello", "start": 0.0, "end": 0.5}, {"word": " there", "start": 0.5, "end": 1.0}]}]}
+    assert [w["w"] for w in rc.parse_words(whisper)] == ["Hello", "there"]
+    unsorted = {"words": [{"text": "b", "start": 2, "end": 3}, {"text": "a", "start": 1, "end": 2}]}
+    assert [w["w"] for w in rc.parse_words(unsorted)] == ["a", "b"]
+    assert rc.parse_words([{"w": "x", "s": 1, "e": 2}]) == [{"w": "x", "s": 1.0, "e": 2.0}]
+    # a segment without word timings is skipped, not read as one long word
+    assert rc.parse_words({"segments": [{"start": 0, "end": 2, "text": "no word timings here"}]}) == []
+    with pytest.raises(ValueError):
+        rc.parse_words({"text": "plain"})
+
+
+def test_load_words_applies_the_offset_and_rejects_files_without_word_timings(tmp_path):
+    path = tmp_path / "w.json"
+    path.write_text(json.dumps({"words": [{"word": "Hi", "start": 0.5, "end": 0.9}]}), encoding="utf-8")
+    assert rc.load_words(path, offset=2.0) == [{"w": "Hi", "s": 2.5, "e": 2.9}]
+    path.write_text(json.dumps({"segments": [{"start": 0, "end": 1, "text": "two words"}]}), encoding="utf-8")
+    with pytest.raises(rc.UsageError, match="word timings"):
+        rc.load_words(path)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(rc.UsageError):
+        rc.load_words(path)
+
+
+def test_cues_that_stay_until_their_last_word_pass():
+    cues = [cue(1, 1.0, 2.7, "The company made money."), cue(2, 3.0, 4.1, "Then it stopped.")]
+    checks = rc.evaluate(measured(), cues, words=SPOKEN)
+    assert statuses(checks, "subtitle_words") == ["PASS"]
+    assert statuses(checks, "subtitle_drift") == ["PASS"]
+
+
+def test_a_cue_closing_before_its_last_word_fails():
+    cues = [cue(1, 1.0, 2.2, "The company made money."), cue(2, 3.0, 4.1, "Then it stopped.")]
+    checks = [c for c in rc.evaluate(measured(), cues, words=SPOKEN) if c["name"] == "subtitle_words"]
+    assert [c["status"] for c in checks] == ["FAIL"]
+    assert "#1" in checks[0]["detail"] and "money." in checks[0]["detail"]
+    assert (checks[0]["start"], checks[0]["end"]) == (2.2, 2.6)
+
+
+def test_a_shared_offset_is_reported_once_as_drift_not_on_every_cue():
+    shift = -0.4     # every cue starts and ends 0.4 s before the speech
+    cues = [cue(1, 1.0 + shift, 2.6 + shift, "The company made money."),
+            cue(2, 3.0 + shift, 4.0 + shift, "Then it stopped.")]
+    m = measured()
+    checks = rc.evaluate(m, cues, words=SPOKEN)
+    assert statuses(checks, "subtitle_words") == ["PASS"]
+    assert statuses(checks, "subtitle_drift") == ["FAIL"]
+    assert m["subtitle_words"]["median_drift_s"] == pytest.approx(-0.4)
+
+
+def test_small_drift_warns():
+    cues = [cue(1, 0.8, 2.6, "The company made money."), cue(2, 2.8, 4.0, "Then it stopped.")]
+    assert statuses(rc.evaluate(measured(), cues, words=SPOKEN), "subtitle_drift") == ["WARN"]
+
+
+def test_spelled_out_numbers_still_match():
+    spoken = words_of(("It", 1.0, 1.1), ("made", 1.1, 1.4), ("fifty-four", 1.4, 2.0), ("point", 2.0, 2.2),
+                      ("two", 2.2, 2.4), ("billion", 2.4, 2.9), ("dollars.", 2.9, 3.5))
+    early = [cue(1, 1.0, 2.95, "It made $54.2 billion.")]
+    assert statuses(rc.evaluate(measured(), early, words=spoken), "subtitle_words") == ["FAIL"]  # "dollars" runs on
+    on_time = [cue(1, 1.0, 3.6, "It made $54.2 billion.")]
+    assert statuses(rc.evaluate(measured(), on_time, words=spoken), "subtitle_words") == ["PASS"]
+
+
+def test_words_from_another_recording_fail_instead_of_passing_silently():
+    other = words_of(("Completely", 1.0, 1.5), ("different", 1.5, 2.0), ("words", 2.0, 2.5))
+    checks = [c for c in rc.evaluate(measured(), [cue(1, 1.0, 2.6, "The company made money.")], words=other)
+              if c["name"] == "subtitle_words"]
+    assert [c["status"] for c in checks] == ["FAIL"] and "words file" in checks[0]["detail"]
+
+
+def test_subtitles_without_words_are_noted_not_failed():
+    checks = rc.evaluate(measured(), [cue(1, 1.0, 2.6, "Hello")])
+    assert statuses(checks, "subtitle_words") == ["INFO"]
+    assert rc.verdict_of(checks) == "PASS"
+
+
+def test_subtitle_text_rules():
+    def text(*cues):
+        return statuses(rc.evaluate(measured(), list(cues)), "subtitle_text")
+    assert text(cue(1, 1, 3, "It made $54.2 billion.")) == ["PASS"]
+    assert text(cue(1, 1, 3, "a non -cash charge")) == ["WARN"]
+    assert text(cue(1, 1, 3, "the stock fell from -32.7% to zero")) == ["PASS"]
+    assert text(cue(1, 1, 3, "It made $54.2", "billion last year")) == ["WARN"]
+    assert text(cue(1, 1, 3, "It made $54.2"), cue(2, 3, 5, "billion last year")) == ["WARN"]
+
+
+def test_freshness_check():
+    assert rc._check_freshness(measured()) == []
+    fresh = rc._check_freshness(measured(inputs_checked=["voice/captions.srt"], stale_inputs=[]))
+    assert [c["status"] for c in fresh] == ["PASS"]
+    stale = rc._check_freshness(measured(inputs_checked=["voice/captions.srt"],
+                                         stale_inputs=[{"file": "voice/captions.srt", "newer_by_s": 7200.0}]))
+    assert [c["status"] for c in stale] == ["WARN"] and "2.0 h newer" in stale[0]["detail"]
+
+
+def test_words_without_srt_is_a_usage_error(tmp_path, capsys):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    words = tmp_path / "w.json"
+    words.write_text("{}", encoding="utf-8")
+    assert rc.main([str(video), "--words", str(words)]) == 2
+    assert "--words needs --srt" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------------------------- exemptions
+
+EXEMPTION = """# Render check exemption
+
+Video: render/final.mp4 sha256:{sha}
+Checks: freeze, hook_motion
+Reason: screen recording; the face cam moves while the screen stays still. Decided by the creator.
+"""
+
+
+def write_exemption(project, sha, text=EXEMPTION, name="RENDER-EXEMPTION-2026-10-17.md"):
+    qa = project / "qa"
+    qa.mkdir(parents=True, exist_ok=True)
+    (qa / name).write_text(text.format(sha=sha), encoding="utf-8")
+
+
+def test_parse_exemption():
+    parsed = rc.parse_exemption(EXEMPTION.format(sha="abcdef012345") + "Video: render/v2.mp4 sha256:0123456789ab\n")
+    assert parsed["videos"] == [("render/final.mp4", "abcdef012345"), ("render/v2.mp4", "0123456789ab")]
+    assert parsed["checks"] == ["freeze", "hook_motion"]
+    assert parsed["reason"].startswith("screen recording")
+
+
+def test_exemption_turns_named_fails_into_warnings_only_for_the_matching_hash(tmp_path):
+    sha = "ab" * 32
+    write_exemption(tmp_path, sha[:12])
+    exemptions, notes = rc.load_exemptions(tmp_path, sha)
+    assert notes == [] and exemptions[0]["checks"] == ["freeze", "hook_motion"]
+    checks = rc.evaluate(measured(freezes=[[0.0, 5.0]], silences=[[116.0, 120.0]]))
+    rc.apply_exemptions(checks, exemptions)
+    freeze = [c for c in checks if c["name"] == "freeze"][0]
+    assert freeze["status"] == "WARN" and freeze["exempted"] is True
+    assert freeze["exemption"]["file"] == "qa/RENDER-EXEMPTION-2026-10-17.md"
+    assert statuses(checks, "trailing_silence") == ["FAIL"]     # not named: still fails
+    assert exemptions[0]["applied_to"] == ["freeze"]
+    other, notes = rc.load_exemptions(tmp_path, "cd" * 32)
+    assert other == [] and [n["status"] for n in notes] == ["INFO"]
+
+
+def test_exemption_needs_a_reason_and_exemptable_checks(tmp_path):
+    sha = "ab" * 32
+    write_exemption(tmp_path, sha[:12], text="Video: render/final.mp4 sha256:{sha}\nChecks: freeze\n")
+    exemptions, notes = rc.load_exemptions(tmp_path, sha)
+    assert exemptions == [] and "Reason" in notes[0]["detail"]
+    write_exemption(tmp_path, sha[:12], text="Video: x.mp4 sha256:{sha}\nChecks: decode, nonsense\n"
+                                             "Reason: this file cannot be decoded and that is fine\n")
+    exemptions, notes = rc.load_exemptions(tmp_path, sha)
+    assert exemptions == [] and any("cannot be exempted" in n["detail"] for n in notes)
+
+
+def test_decode_failures_are_never_exempted():
+    checks = [rc.check("decode", "FAIL", "broken")]
+    rc.apply_exemptions(checks, [{"file": "qa/x.md", "checks": ["decode"], "reason": "x" * 20}])
+    assert checks[0]["status"] == "FAIL"
+
+
+# ------------------------------------------------------------------------------------------- end to end, new checks
+
+def make_zoom_clip(path, seconds=10):
+    """A slow, smooth zoom on one still frame: freezedetect sees change, the eye sees a still picture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    vf = ("trim=end_frame=1,loop=loop=-1:size=1,setpts=N/25/TB,scale=2560:1440,"
+          "zoompan=z='1+0.0006*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=320x180:fps=25")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "lavfi", "-i", f"testsrc2=size=640x360:rate=25:d={seconds}",
+           "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=44100:d={seconds}",
+           "-vf", vf, "-t", str(seconds), "-af", "volume=7dB", "-c:v", "mpeg4", "-q:v", "5",
+           "-c:a", "aac", "-b:a", "96k", str(path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return path
+
+
+@needs_ffmpeg
+def test_e2e_slow_zoom_on_a_still_image_fails_the_hook_band(tmp_path, capsys):
+    clip = make_zoom_clip(tmp_path / "zoom.mp4")
+    code, _ = run_main(capsys, clip)
+    report = report_of(tmp_path / "qa" / "render-check.json")
+    assert "FAIL" not in statuses(report["checks"], "freeze")      # freezedetect misses a slow zoom ...
+    assert statuses(report["checks"], "hook_motion") == ["FAIL"]   # ... the motion band does not
+    hook = report["measured"]["motion"]["hook"]
+    assert hook["slow_pct"] > 50 and hook["frozen_pct"] == 0
+    assert code == 1
+
+
+@needs_ffmpeg
+def test_e2e_live_profile_turns_the_hook_band_into_a_warning(tmp_path, capsys):
+    clip = make_zoom_clip(tmp_path / "zoom.mp4")
+    code, out = run_main(capsys, clip, "--profile", "live")
+    report = report_of(tmp_path / "qa" / "render-check.json")
+    assert statuses(report["checks"], "hook_motion") == ["WARN"]
+    assert code == 0 and "profile live" in out
+
+
+@needs_ffmpeg
+def test_e2e_body_freeze_fails_in_animated_and_passes_in_live(tmp_path, capsys):
+    clip = make_clip(tmp_path / "body.mp4", seconds=30,
+                     vf="drawbox=x=0:y=0:w=iw:h=ih:color=gray:t=fill:enable='between(t,5,9.5)'")
+    code, _ = run_main(capsys, clip, "--hook-seconds", "3")
+    body = [c for c in report_of(tmp_path / "qa" / "render-check.json")["checks"]
+            if c["name"] == "freeze" and c["status"] == "FAIL"]
+    assert len(body) == 1 and "in the body" in body[0]["detail"] and code == 1
+    code, _ = run_main(capsys, clip, "--hook-seconds", "3", "--profile", "live", "--out", tmp_path / "live.json")
+    assert "FAIL" not in statuses(report_of(tmp_path / "live.json")["checks"], "freeze")
+    assert code == 0
+
+
+@needs_ffmpeg
+def test_e2e_words_offset_freshness_and_report_fields(moving_clip, tmp_path, capsys):
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:02,000 --> 00:00:03,200\nThe company made money.\n\n"
+                   "2\n00:00:04,000 --> 00:00:05,100\nThen it stopped.\n", encoding="utf-8")
+    words = tmp_path / "voice-check-transcript.json"
+    # times are relative to the voice file; the narration starts 1 s into the video
+    words.write_text(json.dumps({"segments": [
+        {"start": 1.0, "end": 2.6, "text": " The company made money.", "words": [
+            {"word": " The", "start": 1.0, "end": 1.2}, {"word": " company", "start": 1.2, "end": 1.7},
+            {"word": " made", "start": 1.7, "end": 2.0}, {"word": " money.", "start": 2.0, "end": 2.6}]},
+        {"start": 3.0, "end": 4.0, "text": " Then it stopped.", "words": [
+            {"word": " Then", "start": 3.0, "end": 3.3}, {"word": " it", "start": 3.3, "end": 3.4},
+            {"word": " stopped.", "start": 3.4, "end": 4.0}]}]}), encoding="utf-8")
+    older = moving_clip.stat().st_mtime - 60
+    for path in (srt, words):
+        os.utime(path, (older, older))
+    args = [moving_clip, "--srt", srt, "--words", words, "--words-offset", "1", "--json"]
+    code, out = run_main(capsys, *args, "--out", tmp_path / "w.json")
+    report = json.loads(out)
+    early = [c for c in report["checks"] if c["name"] == "subtitle_words"]
+    assert [c["status"] for c in early] == ["FAIL"] and early[0]["end"] == 3.6   # "money." ends at 2.6 + 1
+    assert statuses(report["checks"], "subtitle_drift") == ["PASS"]
+    assert statuses(report["checks"], "freshness") == ["PASS"]
+    assert report["measured"]["words_offset"] == 1.0
+    assert report["measured"]["subtitle_words"]["match_ratio"] == 1.0
+    assert code == 1
+    newer = moving_clip.stat().st_mtime + 3600        # subtitles edited after the render
+    os.utime(srt, (newer, newer))
+    _, out = run_main(capsys, *args, "--out", tmp_path / "w2.json")
+    stale = [c for c in json.loads(out)["checks"] if c["name"] == "freshness"]
+    assert [c["status"] for c in stale] == ["WARN"] and "captions.srt" in stale[0]["detail"]
+
+
+@needs_ffmpeg
+def test_e2e_exemption_file_bound_to_the_video_hash(tmp_path, capsys):
+    clip = make_clip(tmp_path / "render" / "final.mp4", seconds=12,
+                     vf="drawbox=x=0:y=0:w=iw:h=ih:color=gray:t=fill:enable='lt(t,5)'")
+    code, _ = run_main(capsys, clip)
+    assert code == 1
+    write_exemption(tmp_path, hashlib.sha256(clip.read_bytes()).hexdigest()[:12])
+    code, out = run_main(capsys, clip)
+    report = report_of(tmp_path / "qa" / "render-check.json")
+    exempted = [c for c in report["checks"] if c.get("exempted")]
+    assert exempted and {c["name"] for c in exempted} <= {"freeze", "hook_motion"}
+    assert all(c["status"] == "WARN" for c in exempted)
+    assert report["verdict"] == "PASS" and code == 0
+    assert report["exemptions"][0]["file"] == "qa/RENDER-EXEMPTION-2026-10-17.md"
+    assert "exempted" in out

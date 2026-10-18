@@ -148,9 +148,60 @@ def test_example_template_validates_clean(capsys):
     facts, dnu, findings = fc.validate_facts(data)
     assert _codes(findings) == []
     types = {f["type"] for f in facts.values()}
-    assert types == {"primary", "news", "estimate", "own-calculation"}
+    assert types == set(fc.TYPES) == {"primary", "news", "estimate", "market", "own-calculation"}
     assert "_note" in data and len(dnu) == 1
     assert fc.main([str(path)]) == 0
+
+
+MARKET = {"value": 41.27, "unit": "$ per share", "type": "market", "source": "Example Exchange historical prices",
+          "url": "https://example.com/exchange/acme", "accessed": "2026-03-05", "as_of": "2026-03-04 close, ET"}
+
+
+@pytest.mark.parametrize("as_of", [
+    "2026-03-04 close, ET",
+    "2026-03-04 closing auction (Example Exchange)",
+    "2026-03-04 16:00 EST",
+    "2026-03-04, intraday high",
+    "2026-03-04 17:30 Europe/London",
+    "2026-03-04 settlement, UTC+1",
+    "2026-03-04T16:00:00-05:00",
+    "2026-03-04 16:00 -05:00",
+])
+def test_market_fact_with_date_and_session_or_zone_passes(as_of):
+    data = {"acme_close": dict(MARKET, as_of=as_of)}
+    facts, _, findings = fc.validate_facts(data, TODAY)
+    assert _codes(findings) == [] and "acme_close" in facts
+    assert _codes(findings, "INFO") == ["market"]
+
+
+@pytest.mark.parametrize("as_of,why", [
+    (None, "need as_of"),
+    ("", "need as_of"),
+    ("March 4, 2026 close", "ISO date"),
+    ("2026-02-30 close", "ISO date"),
+    ("2026-03-04", "session"),
+    ("2026-03-04 16:00", "session"),
+    ("2026-06-02 close, ET", "future"),
+])
+def test_market_fact_needs_a_dated_session_or_zone(as_of, why):
+    fact = dict(MARKET)
+    if as_of is None:
+        del fact["as_of"]
+    else:
+        fact["as_of"] = as_of
+    _, _, findings = fc.validate_facts({"acme_close": fact}, TODAY)
+    fails = [f for f in findings if f["level"] == "FAIL"]
+    assert [f["code"] for f in fails] == ["as_of"] and why in fails[0]["message"]
+
+
+def test_market_fact_still_needs_a_source_and_matches_the_script():
+    fact = dict(MARKET, url="")
+    assert "url" in _codes(fc.validate_facts({"acme_close": fact}, TODAY)[2])
+    facts = dict(FACTS, acme_close=dict(MARKET))
+    assert _status("Acme closed at $41.27 a share.", facts)[0] == ("$41.27", "sourced", "acme_close")
+    assert _status("Acme closed at $41.3.", facts)[0][1] == "sourced"  # rounded to the stated precision
+    assert _status("Acme closed at $41.", facts)[0][1] == "sourced"
+    assert _status("Acme closed at $42.", facts)[0][1] == "unsourced"
 
 
 # ---------------------------------------------------------------------------------------------------------------

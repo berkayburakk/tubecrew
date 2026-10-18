@@ -59,6 +59,7 @@ INSTALL = {
     "comfyui": "ComfyUI with the Wan 2.2 workflow: https://docs.comfy.org/tutorials/video/wan/wan2_2",
     "cosyvoice": "https://github.com/FunAudioLLM/CosyVoice (local GPU, open source)",
     "oauth": "Create your own OAuth client: skills/upload-private/references/oauth-setup.md",
+    "ocr": "pip install rapidocr-onnxruntime   (optional: the on-screen text dose check, text_dose.py)",
 }
 
 
@@ -189,6 +190,7 @@ def detect(cwd: Path | None = None, home: Path | None = None) -> dict:
                         or package_uses(cwd, "hyperframes")),
         "comfyui": comfyui_running(os.environ.get("COMFYUI_URL")),
         "cosyvoice": bool(os.environ.get("COSYVOICE_HOME")) or has_module("cosyvoice"),
+        "ocr": has_module("rapidocr_onnxruntime"),
     }
 
 
@@ -260,6 +262,8 @@ def missing_free(f: dict) -> list[str]:
         out.append(INSTALL["hyperframes"])
     if not f.get("faster_whisper"):
         out.append(INSTALL["faster-whisper"])
+    if not f.get("ocr"):
+        out.append(INSTALL["ocr"])
     return out
 
 
@@ -312,6 +316,7 @@ def render(f: dict, rec: dict, choices: dict) -> str:
             ("HyperFrames", _status(f["hyperframes"])), ("ComfyUI (local)", "running" if f["comfyui"] else
                                                             "not running"),
             ("CosyVoice", "found" if f["cosyvoice"] else "not detected (ask)"),
+            ("OCR (text dose)", "found" if f.get("ocr") else "missing (optional)"),
             ("ElevenLabs key", "set" if f["elevenlabs_key"] else "not set (ask about a plan)"),
             ("YouTube OAuth", "ready" if f["google_libs"] and f["oauth_client"] else "not set up")]
     width = max(len(r[0]) for r in rows)

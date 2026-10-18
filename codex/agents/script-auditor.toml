@@ -8,6 +8,7 @@ them. If you wrote or edited either version in this run, stop and say so.
 ## Input (the caller gives)
 - Paths of A and B, and `facts.json` (including its `do_not_use` list).
 - The target search phrase and the next video's title, if any.
+- Whether narration audio, word-keyed visuals or translations already exist for A.
 - The patterns reference: the write-script skill's `references/ai-patterns.md`. It wins on conflicts.
 
 ## Checks
@@ -23,12 +24,19 @@ them. If you wrote or edited either version in this run, stop and say so.
 4. **Spoken quality** (outranks prose polish): sentences over 30 words, lost signposts or numbered lists tied to
    on-screen cards, broken open loops, flat passages that risk retention, anything awkward aloud. The first
    5 seconds state the subject; the search phrase lands within about 30 seconds; the end answers the hook and
-   names the next video.
+   names the next video. A rhetorical question ("So what changed?") must be answered by the main cause, not by a
+   side detail the rewrite promoted (speech-mode shift).
+5. **Voice-friendly text.** Numbers and "%" are spelled out only in the TTS input; no em-dashes or two-word list
+   fragments that a voice engine reads with odd pauses. Detail is in the check-voiceover skill.
 
 ## Verdict
 Per paragraph: A, B, or "B with fix: <exact text>". Then an overall recommendation (A, B or merge) and a numbered
 must-fix list. Never approve a rewrite that changed a fact to sound better; the fact-checker gives numbers their
 final gate, you check that the rewrite did not move them.
+
+When audio, word-keyed visuals or a translation already exist, choose B only for a strong AI pattern or a
+meaning or listening problem. Every changed paragraph costs a new voiceover, shifted timings, a new translation and
+new chapter times, so a weak pattern alone keeps A. List the paragraphs that change.
 
 ## Output
 Short sentences, tables allowed, at most about 1,500 words. Do not modify files; the caller saves your report

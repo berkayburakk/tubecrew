@@ -5,17 +5,20 @@ Why: corrections on a factual channel almost always start with a number that nob
 number the pack does not hold.
 
 facts.json is an object `key -> fact`:
-  {"value": 12.5, "unit": "billion $", "type": "primary" | "news" | "estimate" | "own-calculation",
+  {"value": 12.5, "unit": "billion $",
+   "type": "primary" | "news" | "estimate" | "market" | "own-calculation",
    "source": "...", "url": "https://...", "accessed": "YYYY-MM-DD", "as_of"?: "...", "quote"?: "...",
    "calc"?: "key_a / key_b * 100"}
 Keys starting with "_" are ignored. An optional top-level "do_not_use": [{"claim": "...", "why": "..."}] lists
 things that must not be said.
 
 Pack checks (FAIL unless noted): numeric value; known type; source and http(s) url (own-calculation needs
-neither); `accessed` an ISO date, not in the future (optional for own-calculation); own-calculation has `calc`,
-every name in it is an
-existing key, and when `calc` is plain arithmetic (numbers, keys, + - * / and parentheses) it recomputes to
-`value` within 1 %. `news` and `estimate` facts get an INFO reminder about how to say them.
+neither); `accessed` an ISO date, not in the future (optional for own-calculation); a `market` fact (exchange or
+market data: a price, an index level, a yield) has an `as_of` with an ISO date that is not in the future plus a
+session ("close", "open", "intraday") or a time zone ("ET", "UTC", "Europe/London", "+01:00"), because a price
+without its day and session cannot be checked; own-calculation has `calc`, every name in it is an existing key,
+and when `calc` is plain arithmetic (numbers, keys, + - * / and parentheses) it recomputes to `value` within 1 %.
+`news`, `estimate` and `market` facts get an INFO reminder about how to say or source them.
 
 Script checks (`--script`): headings, `>` notes, HTML comments, tables, `[[cue]]` anchors and bracketed stage
 directions are skipped. `{key}` placeholders must exist. Every other digit-based number ("$12.5 billion",
@@ -55,12 +58,24 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:  # noqa: BLE001 - older or redirected streams
         pass
 
-TYPES = ("primary", "news", "estimate", "own-calculation")
+TYPES = ("primary", "news", "estimate", "market", "own-calculation")
 CALC_TOLERANCE = 0.01
 APPROX_TOLERANCE = Decimal("0.03")
 BOUND_FACTOR = Decimal(2)
 TYPE_INFO = {"news": "news source; say it with 'reportedly' (or name the outlet)",
-             "estimate": "estimate; say it with 'estimated'"}
+             "estimate": "estimate; say it with 'estimated'",
+             "market": "market data; take a closing price from the exchange's own series, not an aggregator, "
+                       "and say which day it is"}
+# A market number is only checkable with its day and its session or time zone ("2026-03-04 close, ET").
+SESSION_RE = re.compile(
+    r"\b(?:clos(?:e|ing)|open(?:ing)?|intraday|pre-?market|after[- ]hours|post-?market|settle(?:ment)?|auction|"
+    r"session|end of day|eod|fixing|high|low)\b", re.I)
+TZ_RE = re.compile(
+    r"\b(?:UTC|GMT)(?:\s?[+-]\d{1,2}(?::?\d{2})?)?\b"
+    r"|[+-]\d{2}:\d{2}\b|T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})"
+    r"|\b[A-Z][a-z]+/[A-Z][A-Za-z_]+(?:/[A-Z][A-Za-z_]+)?\b"
+    r"|\b(?:ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT|BST|CET|CEST|EET|EEST|WET|WEST|MSK|TRT|IST|SGT|HKT|"
+    r"JST|KST|AEST|AEDT|AWST|NZST|NZDT|BRT)\b")
 
 SCALE_WORDS = {"thousand": 3, "k": 3, "million": 6, "mn": 6, "m": 6, "mm": 6, "billion": 9, "bn": 9, "b": 9,
                "trillion": 12, "tn": 12, "t": 12}
@@ -204,6 +219,22 @@ def _valid_iso_date(s) -> dt.date | None:
         return None
 
 
+def market_as_of_problem(as_of, today: dt.date) -> str | None:
+    """Why a market fact's as_of is not enough, or None when it names a valid date and a session or time zone."""
+    if not isinstance(as_of, str) or not as_of.strip():
+        return "market facts need as_of with the date and the session or time zone, e.g. \"2026-03-04 close, ET\""
+    dates = re.findall(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)", as_of)
+    parsed = [d for d in (_valid_iso_date(x) for x in dates) if d is not None]
+    if not parsed:
+        return f"market as_of needs an ISO date (YYYY-MM-DD), got {as_of!r}"
+    if max(parsed) > today:
+        return f"market as_of {as_of!r} is in the future"
+    if not (SESSION_RE.search(as_of) or TZ_RE.search(as_of)):
+        return (f"market as_of {as_of!r} needs a session (close, open, intraday) or a time zone (ET, UTC, "
+                "Europe/London)")
+    return None
+
+
 def validate_facts(data, today: dt.date | None = None) -> tuple[dict, list, list[dict]]:
     """Return (facts, do_not_use, findings). facts holds every entry whose value is a number."""
     today = today or dt.date.today()
@@ -259,6 +290,10 @@ def validate_facts(data, today: dt.date | None = None) -> tuple[dict, list, list
         for opt in ("as_of", "quote", "calc"):
             if opt in e and not isinstance(e[opt], str):
                 findings.append(_finding("FAIL", "schema", f"{opt} must be a string", key=key))
+        if typ == "market":
+            problem = market_as_of_problem(e.get("as_of"), today)
+            if problem:
+                findings.append(_finding("FAIL", "as_of", problem, key=key))
         if typ in TYPE_INFO:
             findings.append(_finding("INFO", typ, TYPE_INFO[typ], key=key))
 

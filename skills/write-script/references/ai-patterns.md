@@ -70,4 +70,16 @@ ones only when they pile up. In other languages, apply the patterns by meaning, 
 | Wrong association | "borrowed another" making a share sale sound like debt | "also borrowed" |
 | Long sentences | merged fragments of 32-39 words | split; at most one long sentence per paragraph |
 | Deleted signposts | roadmap and "three numbers" list removed | spoken-script exception, put them back |
-| Broken visual triggers | words that drive on-screen animations deleted | re-anchor the trigger to a new word |
+| Speech-mode shift | "So what changed? For one thing, customers now pay Acme up front." The draft called prepayments "the strangest part"; the rewrite answers its own question with them, so a side fact sounds like the reason profits came back | give the main cause first, then the side fact as its own point: "Mostly, prices. But something else is new: customers now pay Acme up front." |
+| Broken visual triggers | words that drive on-screen animations deleted | re-anchor the trigger to a new word; `script_lint.py --triggers` lists the ones a rewrite broke |
+
+A rhetorical question ("So what changed?", "Why does that matter?") promises that the next sentence is the answer.
+After a rewrite, check that what follows really is the main answer, not the most vivid detail.
+
+## Text that is already voiced or translated
+
+Once narration audio, word-timed visuals or a translation exist, every paragraph that takes the B version must be
+voiced again, its timings shift (captions, word-keyed animations, chapter times in the description and in every
+localized description), and its translations are redone. So B wins a paragraph only for a strong pattern (A1-A5,
+C12-C17, E22-E25) or a meaning or listening problem; a weak pattern alone keeps A. After merging, run the lint with
+`--triggers`, re-voice only the changed paragraphs, and list their ids for whoever handles the dubs.

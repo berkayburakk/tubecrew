@@ -25,7 +25,10 @@ For every number you might use, add an entry (start from `$SKILL/templates/facts
 ```
 
 - `type` is one of `primary` (the company, regulator or official dataset said it), `news` (a report about it),
-  `estimate` (an analyst or model), `own-calculation` (yours; write the formula in `calc` using other keys).
+  `estimate` (an analyst or model), `market` (exchange or market data: a price, an index level, a yield),
+  `own-calculation` (yours; write the formula in `calc` using other keys).
+- A `market` fact needs `as_of` with the date and the session or time zone (`"2026-03-04 close, ET"`). Take a
+  closing price from the exchange's own historical series, not an aggregator; they can differ on a single day.
 - Prefer the primary source. A news article is a pointer to the primary source, not the end of the search.
 - Keep three dates apart: when you accessed it, what period it describes (`as_of`), and when the event happened.
 - Do not mix similar-sounding things: revenue, annualized revenue, profit, valuation and money raised are five
@@ -39,8 +42,8 @@ For every number you might use, add an entry (start from `$SKILL/templates/facts
 python $SKILL/scripts/facts_check.py facts.json
 ```
 
-It fails on missing links, bad dates, unknown types, and `own-calculation` entries whose formula does not
-recompute to the stated value. Fix until it exits 0.
+It fails on missing links, bad dates, unknown types, `market` entries without a dated session or time zone, and
+`own-calculation` entries whose formula does not recompute to the stated value. Fix until it exits 0.
 
 ## 3. Gate the script
 
@@ -63,6 +66,8 @@ the gate. Exit 1 means fix the script, not the fact file.
 - Superlatives ("the biggest", "the first", "the only") need their own source.
 - Hook and thumbnail numbers need two independent sources that agree.
 - Nothing that was not reported is drawn as fact (someone's cost basis, an implied share, a made-up chart).
+- Rounded parts add up to the total shown with them; otherwise show the residual as its own "≈" term. A label
+  ("non-cash") belongs only to the item it describes.
 - No advice phrasing (buy, sell, you should invest). Explain; do not recommend.
 
 ## Hand-off

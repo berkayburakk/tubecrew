@@ -120,6 +120,16 @@ Last line.
         assert gone not in tokens
 
 
+def test_paragraph_ids_are_labels_not_speech():
+    md = "**P01** The company sold three hundred units.\n\nP02. Then it stopped.\n\nP03: Prices fell.\n"
+    assert vc.clean_script(md).split("\n") == ["The company sold three hundred units.", "Then it stopped.",
+                                               "Prices fell."]
+    assert vc.clean_script(md, keep_ids=True).split("\n")[0] == "P01 The company sold three hundred units."
+    heard = vc.normalize("The company sold three hundred units. Then it stopped. Prices fell.")
+    result = vc.compare(vc.normalize(vc.clean_script(md)), heard)
+    assert result["matched_words"] == result["script_words"]
+
+
 def test_placeholders_detected_after_cleaning():
     assert vc.find_placeholders(vc.clean_script("We made {revenue} last year.")) == ["{revenue}"]
     assert vc.find_placeholders(vc.clean_script("> {note}\nPlain text [ON SCREEN: {chart}].")) == []
@@ -277,3 +287,171 @@ def test_rel_path_outside_project_keeps_only_the_file_name(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     assert vc.rel_path(tmp_path / "other" / "take.srt", project) == "take.srt"
+
+
+# ------------------------------------------------------------------------------------------- paragraphs and pace
+
+P1 = "Last year the company made 12.5 billion dollars in profit."
+P2 = "Most of it came from chips that nobody outside the industry had heard of."
+P3 = "Then a small rival in Ohio changed the plan for everyone."
+THREE = f"# Story\n\n{P1}\n\n{P2}\n\n{P3}\n"
+
+
+def spoken_words(text, start, wpm):
+    """Word-level transcript items for `text` read at `wpm` from `start`; returns (words, end time)."""
+    step = 60.0 / wpm
+    words = []
+    t = start
+    for w in text.split():
+        words.append({"word": " " + w, "start": round(t, 3), "end": round(t + step * 0.9, 3)})
+        t += step
+    return words, t
+
+
+def whisper_json(*parts, gap=0.6):
+    """parts: (text, wpm) read one after another with `gap` seconds between them."""
+    segments, t = [], 0.5
+    for text, wpm in parts:
+        words, end = spoken_words(text, t, wpm)
+        segments.append({"start": words[0]["start"], "end": words[-1]["end"], "text": " " + text, "words": words})
+        t = end + gap
+    return {"segments": segments}
+
+
+def run_json(tmp_path, capsys, transcript, *extra, script=THREE):
+    s = write(tmp_path / "script.md", script)
+    t = write(tmp_path / "voice" / "narration.json", json.dumps(transcript))
+    code = vc.main([str(s), str(t), "--json", *extra])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_paragraph_rows_with_word_timings(tmp_path, capsys):
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), (P2, 180), (P3, 180)))
+    assert code == 0 and report["verdict"] == "PASS" and report["timestamps"] == "word"
+    rows = report["paragraphs"]
+    assert [r["paragraph"] for r in rows] == [1, 2, 3]
+    assert [r["words"] for r in rows] == [10, 14, 11]
+    assert all(r["status"] == "PASS" and r["pace"] == "ok" and r["fidelity"] == 1.0 for r in rows)
+    assert 175 <= rows[1]["wpm"] <= 190
+    assert rows[0]["start"] == 0.5 and rows[1]["start"] > rows[0]["end"]
+    assert report["pace"]["measured"] is True and report["pace"]["warn_band"] == [150.0, 215.0]
+    assert report["failing_paragraphs"] == []
+
+
+def test_repeat_loop_fails_the_paragraph_it_repeats(tmp_path, capsys):
+    # The model read paragraph 2 three times: the words are all there, only the pace gives it away.
+    looped = P2 + " " + P2 + " " + P2
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), (looped, 180), (P3, 180)))
+    assert code == 1 and report["verdict"] == "FAIL"
+    rows = report["paragraphs"]
+    assert rows[1]["status"] == "FAIL" and rows[1]["pace"] == "slow" and rows[1]["wpm"] < 100
+    assert rows[0]["status"] == "PASS" and rows[2]["status"] == "PASS"
+    assert report["failing_paragraphs"] == [2]
+    pace = [i for i in report["issues"] if i["kind"] == "pace"]
+    assert len(pace) == 1 and pace[0]["reason"] == "slow" and pace[0]["paragraph"] == 2
+    assert pace[0]["expected"] == "100-300 wpm" and "start" in pace[0]
+    assert all(i["paragraph"] == 2 for i in report["issues"])
+    assert report["counts"]["FAIL"] >= 1
+
+
+def test_pace_bands_warn_then_fail(tmp_path, capsys):
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), (P2, 240), (P3, 180)))
+    assert code == 0 and report["paragraphs"][1]["pace"] == "fast"
+    assert report["paragraphs"][1]["status"] == "WARN" and report["counts"]["WARN"] == 1
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), (P2, 240), (P3, 180)), "--wpm-fail-band",
+                            "100,230")
+    assert code == 1 and report["failing_paragraphs"] == [2]
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), (P2, 240), (P3, 180)), "--wpm-band", "off",
+                            "--wpm-fail-band", "off")
+    assert code == 0 and report["paragraphs"][1]["pace"] == "ok" and report["pace"]["warn_band"] is None
+
+
+def test_human_voice_band(tmp_path, capsys):
+    slow_human = whisper_json((P1, 140), (P2, 140), (P3, 140))
+    assert run_json(tmp_path, capsys, slow_human)[1]["counts"]["WARN"] == 3
+    code, report = run_json(tmp_path, capsys, slow_human, "--wpm-band", "130,190")
+    assert code == 0 and report["counts"]["WARN"] == 0
+
+
+def test_short_paragraph_gets_no_pace_verdict(tmp_path, capsys):
+    script = f"{P1}\n\nSo what happened?\n"
+    code, report = run_json(tmp_path, capsys, whisper_json((P1, 180), ("So what happened?", 40)), script=script)
+    assert code == 0
+    short = report["paragraphs"][1]
+    assert short["words"] == 3 and short["wpm"] is not None and short["pace"] is None
+
+
+def test_segment_timings_report_paragraphs_without_pace(tmp_path, capsys):
+    srt = ("1\n00:00:00,500 --> 00:00:04,000\n" + P1 + "\n\n2\n00:00:04,500 --> 00:00:30,000\n" + P2 + "\n\n"
+           "3\n00:00:30,500 --> 00:00:34,000\n" + P3 + "\n")
+    s = write(tmp_path / "script.md", THREE)
+    t = write(tmp_path / "voice" / "narration.srt", srt)
+    assert vc.main([str(s), str(t)]) == 0   # 14 words in 25 s would be "slow", but cue times are not word times
+    out = capsys.readouterr().out
+    assert "pace not measured" in out
+    report = json.loads((tmp_path / "qa" / "voice-check.json").read_text(encoding="utf-8"))
+    assert report["timestamps"] == "segment" and report["pace"]["measured"] is False
+    assert all(r["wpm"] is None and r["start"] is not None for r in report["paragraphs"])
+
+
+def test_issues_carry_their_paragraph(tmp_path, capsys):
+    transcript = whisper_json((P1, 180), (P2, 180), (P3.replace("Ohio", "Idaho"), 180))
+    code, report = run_json(tmp_path, capsys, transcript)
+    assert code == 0
+    assert [(i["reason"], i["paragraph"]) for i in report["issues"]] == [("mismatch", 3)]
+    assert report["paragraphs"][2]["status"] == "WARN" and report["paragraphs"][2]["fidelity"] < 1.0
+
+
+def test_human_output_lists_flagged_paragraphs(tmp_path, capsys):
+    s = write(tmp_path / "script.md", THREE)
+    looped = whisper_json((P1, 180), (P2 + " " + P2 + " " + P2, 180), (P3, 180))
+    t = write(tmp_path / "voice" / "narration.json", json.dumps(looped))
+    assert vc.main([str(s), str(t)]) == 1
+    out = capsys.readouterr().out
+    assert "Paragraphs: 3" in out and "slow" in out
+    assert "Regenerate or re-record paragraphs: 2" in out and "VERDICT: FAIL" in out
+
+
+def test_bad_band_is_a_usage_error(tmp_path, capsys):
+    s = write(tmp_path / "script.md", THREE)
+    t = write(tmp_path / "t.srt", SRT)
+    with pytest.raises(SystemExit) as stop:
+        vc.main([str(s), str(t), "--wpm-band", "fast"])
+    assert stop.value.code == 2
+    assert vc.parse_band("150, 215") == (150.0, 215.0) and vc.parse_band("off") is None
+    with pytest.raises(ValueError):
+        vc.parse_band("215,150")
+
+
+def test_paragraph_texts_and_word_count():
+    spoken = vc.clean_script(THREE)
+    assert vc.paragraph_texts(spoken) == [P1, P2, P3]
+    assert vc.word_count("It cost $12.5 billion - really.") == 5
+
+
+def test_transcribe_turns_off_context_conditioning(tmp_path, monkeypatch):
+    seen = []
+
+    class FakeModel:
+        def __init__(self, name, device, compute_type):
+            seen.append(("load", device))
+
+        def transcribe(self, path, **options):
+            seen.append(options)
+            word = types.SimpleNamespace(word=" Hello", start=0.0, end=0.4)
+            segment = types.SimpleNamespace(start=0.0, end=0.5, text=" Hello", words=[word])
+            return iter([segment]), types.SimpleNamespace(language="en")
+
+    fake = types.ModuleType("faster_whisper")
+    fake.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+    whisper = vc.Whisper("small", beam_size=7)
+    first = whisper.transcribe(tmp_path / "a.wav", "en-GB")
+    whisper.transcribe(tmp_path / "b.wav", "en")
+    assert [s for s in seen if isinstance(s, tuple)] == [("load", "auto")]   # loaded once, reused
+    options = seen[1]
+    assert options["condition_on_previous_text"] is False and options["beam_size"] == 7
+    assert options["word_timestamps"] is True and options["language"] == "en"
+    assert first["decode"] == {"beam_size": 7, "condition_on_previous_text": False}
+    assert first["segments"][0]["words"][0] == {"word": " Hello", "start": 0.0, "end": 0.4}
+    assert vc.transcribe(tmp_path / "c.wav", "en", "small")["decode"]["beam_size"] == vc.WHISPER_BEAM_SIZE

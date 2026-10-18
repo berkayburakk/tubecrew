@@ -13,6 +13,9 @@ How it works:
   4. --dates K fetches full metadata (`yt-dlp -J <video url>`) for the top K outliers only, for exact dates.
      Under 7 days old is "too new" (views not settled); over 365 days is "old" (weak evidence). An approximate
      age is a lower bound ("1 year ago" means 12-23 months), so an approximate 365 days already counts as old.
+  5. Likes: the flat pull has no like counts, but the full read in step 4 has them, so the top K outliers are
+     checked at no extra cost (a catalog that already carries "likes" is checked for every outlier). Likes under
+     0.35% of views mark a video as "possibly ad-pushed: not evidence". No per-video fetch is made for likes alone.
   View counts come from the channel page, rounded the way YouTube shows them ("63M views" -> 63,000,000).
 
 Run:
@@ -20,7 +23,7 @@ Run:
   python outliers.py @channelA @channelB --save catalog.json      # keep the raw catalog
   python outliers.py --from-json catalog.json --json              # no network at all
 
-The catalog file maps channel name -> list of {id, title, views, duration, upload_date?, date_approx?}.
+The catalog file maps channel name -> list of {id, title, views, duration, upload_date?, date_approx?, likes?}.
 Keys starting with "_" are ignored. yt-dlp is taken from PATH, or `python -m yt_dlp` when that is installed.
 
 Exit codes: 0 report printed (this is a research tool, not a gate), 2 usage or environment error
@@ -48,6 +51,10 @@ for _stream in (sys.stdout, sys.stderr):
 MIN_N = 4
 TOO_NEW_DAYS = 7
 OLD_DAYS = 365
+# Views bought as ads rarely turn into likes: under 0.35% likes per view was the mark of ad-pushed clusters, while
+# organic videos usually sit well above 1%.
+AD_PUSH_PCT = 0.35
+AD_LABEL = "possibly ad-pushed: not evidence"
 LEADS_LINE = ("Outliers are leads, not topics. A topic is double-sourced only when at least two independent channels "
               "beat their own median on it.")
 THIN_REASON = "a median of {n} video{s} is not a median; need at least %d" % MIN_N
@@ -136,6 +143,9 @@ def parse_flat_playlist(data: dict, fallback_name: str = "") -> tuple[str, list[
         if not vid or views is None or e.get("live_status") in ("is_upcoming", "is_live"):
             continue
         item = {"id": vid, "title": e.get("title") or "", "views": int(views), "duration": e.get("duration")}
+        likes = e.get("like_count")
+        if isinstance(likes, int) and not isinstance(likes, bool):
+            item["likes"] = likes
         exact = _iso_date(e.get("upload_date"))
         approx = None if exact else _iso_date(e.get("timestamp") or e.get("release_timestamp"))
         if exact:
@@ -153,6 +163,25 @@ def parse_video_metadata(data: dict) -> str | None:
         return None
     return _iso_date(data.get("upload_date")) or _iso_date(data.get("timestamp")) or _iso_date(
         data.get("release_timestamp"))
+
+
+def parse_video_engagement(data: dict) -> tuple[int | None, int | None]:
+    """(likes, exact views) from `yt-dlp -J <video url>` output; None where hidden or missing."""
+    if not isinstance(data, dict):
+        return None, None
+
+    def _count(x):
+        return x if isinstance(x, int) and not isinstance(x, bool) else None
+
+    return _count(data.get("like_count")), _count(data.get("view_count"))
+
+
+def like_check(likes, views) -> dict:
+    """Likes as a percent of views and whether that looks ad-pushed. Empty when either number is unknown."""
+    if likes is None or isinstance(likes, bool) or not views:
+        return {}
+    pct = likes / views * 100
+    return {"likes": int(likes), "like_view_pct": round(pct, 3), "ad_pushed": pct < AD_PUSH_PCT}
 
 
 def channel_stats(videos: list[dict]) -> dict:
@@ -223,6 +252,7 @@ def find_outliers(catalog: dict, min_multiple: float = 2.0, today: dt.date | Non
                 "upload_date": _iso_date(v.get("upload_date")), "date_approx": approx,
                 "age_days": days, "age_label": age_label(days, approx),
             })
+            outliers[-1].update(like_check(v.get("likes"), v["views"]))
             summary["outliers"] += 1
             if summary["top_multiple"] is None or multiple > summary["top_multiple"]:
                 summary["top_multiple"] = round(multiple, 2)
@@ -258,6 +288,10 @@ def load_catalog(path: Path) -> dict:
                                         or not (views is None or isinstance(views, (int, float)))):
                 raise UsageError(f"catalog {path}: {channel!r} has a video without an id or with non-numeric "
                                  f"views: {json.dumps(v, ensure_ascii=False)[:120]}")
+            likes = v.get("likes") if isinstance(v, dict) else None
+            if likes is not None and (isinstance(likes, bool) or not isinstance(likes, int)):
+                raise UsageError(f"catalog {path}: {channel!r} has non-numeric likes: "
+                                 f"{json.dumps(v, ensure_ascii=False)[:120]}")
         out[channel] = videos
     return out
 
@@ -293,10 +327,12 @@ def fetch_channel(base_cmd: list[str], url: str, last: int) -> tuple[str, list[d
     return parse_flat_playlist(data, fallback_name=url)
 
 
-def fetch_upload_date(base_cmd: list[str], video_id: str) -> str | None:
+def fetch_video(base_cmd: list[str], video_id: str) -> tuple[str | None, int | None, int | None]:
+    """One full read of a video: (exact upload date, likes, exact views)."""
     data = _run_json(base_cmd + ["-J", "--no-playlist", "--skip-download", "--no-warnings", video_url(video_id)],
                      timeout=180)
-    return parse_video_metadata(data)
+    likes, views = parse_video_engagement(data)
+    return parse_video_metadata(data), likes, views
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -327,6 +363,8 @@ def print_human(outliers: list[dict], summaries: list[dict], min_multiple: float
             print(f"  {o['multiple']:>7.1f}x  {_fmt_int(o['views']):>12}  {med:>20}  {_fmt_age(o):<14}  "
                   f"[{o['channel']}] {o['title']}")
             print(f"  {'':>8}  {o['url']}")
+            if o.get("ad_pushed"):
+                print(f"  {'':>8}  {AD_LABEL} (likes {o['like_view_pct']:.2f}% of views, under {AD_PUSH_PCT}%)")
     print()
     print("Per channel")
     for s in summaries:
@@ -355,8 +393,8 @@ def main(argv=None) -> int:
     ap.add_argument("--last", type=int, default=60, help="newest long videos per channel to pull (default 60)")
     ap.add_argument("--min-multiple", type=float, default=2.0, help="keep videos at or above this multiple")
     ap.add_argument("--dates", type=int, default=10, metavar="K",
-                    help="fetch exact upload dates for the top K outliers (default 10; 0 = off; never with "
-                         "--from-json alone)")
+                    help="read the top K outliers in full for exact upload dates and likes (default 10; 0 = off; "
+                         "never with --from-json alone)")
     ap.add_argument("--save", metavar="CATALOG", help="write the catalog (channel -> videos) to this file")
     ap.add_argument("--json", action="store_true", help="print a machine-readable result")
     try:
@@ -410,14 +448,18 @@ def main(argv=None) -> int:
         fetched = 0
         for o in outliers[:args.dates]:
             try:
-                exact = fetch_upload_date(base_cmd, o["id"])
+                exact, likes, exact_views = fetch_video(base_cmd, o["id"])
             except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
                 notes.append(f"no exact date for {o['id']}: {exc}")
                 continue
+            v = by_id.get((o["channel"], o["id"]))
+            if likes is not None:
+                o.update(like_check(likes, exact_views or o["views"]))
+                if v is not None:
+                    v["likes"] = likes
             if exact:
                 fetched += 1
                 o["upload_date"], o["date_approx"] = exact, False
-                v = by_id.get((o["channel"], o["id"]))
                 if v is not None:
                     v["upload_date"] = exact
                     v.pop("date_approx", None)
@@ -426,6 +468,11 @@ def main(argv=None) -> int:
                      "ages marked ~ are approximate")
     elif any(o.get("date_approx") for o in outliers):
         notes.append("ages marked ~ are approximate")
+    if outliers:
+        checked = sum(1 for o in outliers if "like_view_pct" in o)
+        pushed = sum(1 for o in outliers if o.get("ad_pushed"))
+        notes.append(f"likes checked for {checked} of {len(outliers)} outliers, {pushed} {AD_LABEL}; the flat "
+                     "catalog has no likes, so only outliers read with --dates (or a catalog with likes) are checked")
 
     summaries.extend({"channel": e["channel"], "n": 0, "median": None, "outliers": 0, "top_multiple": None,
                       "skipped": None, "error": e["error"]} for e in errors)
@@ -441,7 +488,8 @@ def main(argv=None) -> int:
             return 2
 
     if args.json:
-        print(json.dumps({"min_multiple": args.min_multiple, "min_n": MIN_N, "today": today.isoformat(),
+        print(json.dumps({"min_multiple": args.min_multiple, "min_n": MIN_N, "ad_push_pct": AD_PUSH_PCT,
+                          "today": today.isoformat(),
                           "outliers": outliers, "channels": summaries, "notes": notes, "note": LEADS_LINE},
                          ensure_ascii=False, indent=2))
     else:

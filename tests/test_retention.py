@@ -189,7 +189,8 @@ def test_analyze_and_render():
     report = rt.analyze(VIDEO_ID, VIDEO, report_from(points, relative), totals, sections, "description chapters",
                         cues)
     assert report["duration_s"] == 200 and report["views_data_api"] == 1234
-    assert report["analytics"] == {"views": 1100, "average_view_duration_s": 95, "average_view_percentage": 47.5}
+    assert report["analytics"] == {"views": 1100, "engaged_views": None, "average_view_duration_s": 95,
+                                   "average_view_percentage": 47.5}
     assert report["relative_retention"] == {"10": 0.42, "30": 0.42}
     assert report["opening"]["loss_pp"] == pytest.approx(28.0)
     assert report["steepest_drops"][0]["said"] == ["So that was the setup, and now a long aside."]
@@ -205,7 +206,12 @@ class FakeCred:
     token = "fake-access-token"
 
 
+NOW = rt.dt.datetime(2026, 10, 18, 12, 0, tzinfo=rt.dt.timezone.utc)   # VIDEO is 17 days old here
+ENOUGH = {"columnHeaders": [{"name": "views"}, {"name": "engagedViews"}], "rows": [[150, 120]]}
+
+
 def _mock_api(monkeypatch, curve, totals=None):
+    monkeypatch.setattr(rt, "_now", lambda: NOW)
     monkeypatch.setattr(rt, "load_credentials", lambda *a, **k: FakeCred())
     monkeypatch.setattr(rt, "new_session", lambda: object())
     monkeypatch.setattr(rt, "fetch_video_info", lambda session, token, video_id: VIDEO)
@@ -229,8 +235,7 @@ def test_no_rows_path(monkeypatch, capsys):
 
 
 def test_full_run_writes_out_without_absolute_paths(monkeypatch, capsys, tmp_path):
-    totals = {"columnHeaders": [{"name": "views"}], "rows": [[50]]}
-    _mock_api(monkeypatch, report_from(synthetic_curve(), [0.5] * 100), totals)
+    _mock_api(monkeypatch, report_from(synthetic_curve(), [0.5] * 100), ENOUGH)
     srt = tmp_path / "captions.srt"
     srt.write_text(SRT, encoding="utf-8")
     out = tmp_path / "report.json"
@@ -239,6 +244,7 @@ def test_full_run_writes_out_without_absolute_paths(monkeypatch, capsys, tmp_pat
     written = out.read_text(encoding="utf-8")
     assert json.loads(written) == printed
     assert printed["sections_source"] == "description chapters"
+    assert printed["judged"] is True and printed["analytics"]["engaged_views"] == 120
     assert str(tmp_path) not in written
     text_out = tmp_path / "report.txt"
     assert rt.main([VIDEO_ID, "--srt", str(srt), "--out", str(text_out)]) == 0
@@ -296,3 +302,66 @@ def test_fetch_curve_falls_back_without_relative_metric():
     session = Session()
     assert rt.fetch_curve(session, "tok", VIDEO_ID, "2026-10-01", "2026-10-18") == {"rows": [[0.01, 1.0]]}
     assert session.metrics == ["audienceWatchRatio,relativeRetentionPerformance", "audienceWatchRatio"]
+
+
+# --- minimum-sample guard -----------------------------------------------------------------------------------------
+
+def test_sample_guard_boundaries():
+    assert rt.MIN_AGE_HOURS == 72 and rt.MIN_ENGAGED_VIEWS == 100
+    assert rt.sample_guard(71.9, 500)["reason"] == "age"
+    assert rt.sample_guard(None, 500)["reason"] == "age"
+    assert rt.sample_guard(72.0, 99)["reason"] == "sample"
+    assert rt.sample_guard(72.0, 100) is None
+    assert rt.sample_guard(72.0, None) is None          # age-only check before the totals are fetched
+    assert rt.hours_since("2026-10-17T12:00:00Z", NOW) == pytest.approx(24)
+    assert rt.hours_since("soon", NOW) is None
+    assert rt.hours_since("2026-10-17T12:00:00.5Z", NOW) == pytest.approx(24, abs=0.01)   # 1 fraction digit
+
+
+def test_young_video_is_too_early_without_any_analytics_call(monkeypatch, capsys):
+    young = {**VIDEO, "snippet": {**VIDEO["snippet"], "publishedAt": "2026-10-17T12:00:00Z"}}
+    _mock_api(monkeypatch, None)
+    monkeypatch.setattr(rt, "fetch_video_info", lambda session, token, video_id: young)
+    monkeypatch.setattr(rt, "fetch_curve", lambda *a: (_ for _ in ()).throw(AssertionError("curve fetched")))
+    assert rt.main([VIDEO_ID]) == 0
+    out = capsys.readouterr().out
+    assert "Too early to judge" in out and "24 hours old" in out and "Come back after 2026-10-20" in out
+    assert rt.main([VIDEO_ID, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["judged"] is False and data["reason"] == "age" and data["come_back_after"] == "2026-10-20"
+
+
+def test_small_sample_is_too_early_and_anyway_marks_not_judged(monkeypatch, capsys, tmp_path):
+    small = {"columnHeaders": [{"name": "views"}, {"name": "engagedViews"}], "rows": [[300, 99]]}
+    _mock_api(monkeypatch, report_from(synthetic_curve()), small)
+    out = tmp_path / "report.json"
+    assert rt.main([VIDEO_ID, "--json", "--out", str(out)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == {**data, "judged": False, "reason": "sample", "engaged_views": 99}
+    assert "steepest_drops" not in data and not out.exists()
+    assert rt.main([VIDEO_ID, "--anyway"]) == 0
+    text = capsys.readouterr().out
+    assert text.startswith("NOT JUDGED (--anyway): Too early to judge: 99 engaged views")
+    assert "STEEPEST DROPS AFTER 30 s" in text
+    no_engaged = {"columnHeaders": [{"name": "views"}], "rows": [[80]]}   # falls back to views
+    _mock_api(monkeypatch, report_from(synthetic_curve()), no_engaged)
+    assert rt.main([VIDEO_ID, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["reason"] == "sample"
+
+
+def test_totals_ask_for_engaged_views():
+    seen = {}
+
+    class Session:
+        def get(self, url, params=None, headers=None, timeout=None):
+            seen.update(params)
+
+            class R:
+                status_code, text = 200, "{}"
+
+                def json(self):
+                    return {}
+            return R()
+
+    rt.fetch_totals(Session(), "tok", VIDEO_ID, "2026-10-01", "2026-10-18")
+    assert "engagedViews" in seen["metrics"].split(",")

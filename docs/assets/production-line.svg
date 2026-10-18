@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1640" height="810" viewBox="0 0 1640 810" role="img" aria-labelledby="title desc">
   <title id="title">The tubecrew production line</title>
-  <desc id="desc">Five stations: plan, write, make, ship and learn. Each station writes a file and has a gate: skeptic and fact checks, script lint and fact-checker, voice and render checks, an upload go decision, and a lesson that becomes a new check. The creator picks the topic, approves the first 60 to 90 seconds and presses publish. Gate scripts measure in code; independent review agents never review their own work.</desc>
+  <desc id="desc">Five stations: plan, write, make, ship and learn. Each station writes a file and has a gate: skeptic and fact checks, script lint and fact-checker, voice and render checks, thumbnail and upload checks, and a lesson that becomes a new check. The creator picks the topic, approves the first 60 to 90 seconds and presses publish. Gate scripts measure in code; independent review agents never review their own work.</desc>
   <defs>
     <marker id="flow" markerWidth="14" markerHeight="14" refX="10" refY="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 L10 7 L2 12" fill="none" stroke="#294f82" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="loop" markerWidth="14" markerHeight="14" refX="10" refY="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 L10 7 L2 12" fill="none" stroke="#5b6570" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -59,15 +59,15 @@ svg{background-color:#0d1117}
         <text x="1476" y="302">5. Learn</text>
       </g>
       <g font-size="24" fill="#5b6570">
-        <text x="164" y="356">Topic from outliers</text>
+        <text x="164" y="356">Outliers and demand</text>
         <text x="164" y="390">Every number sourced</text>
         <text x="492" y="356">A script for the ear</text>
         <text x="492" y="390">Humanized, reviewed</text>
         <text x="820" y="356">Voice, edit, render</text>
         <text x="820" y="390">With your own tools</text>
-        <text x="1148" y="356">Package and upload</text>
+        <text x="1148" y="356">Thumbnail and upload</text>
         <text x="1148" y="390">Always as private</text>
-        <text x="1476" y="356">Retention by scene</text>
+        <text x="1476" y="356">Retention and pulse</text>
         <text x="1476" y="390">One lesson per video</text>
       </g>
       <g font-size="16" font-weight="700" fill="#294f82" letter-spacing="3">
@@ -81,7 +81,7 @@ svg{background-color:#0d1117}
         <text x="164" y="484">skeptic + facts_check</text>
         <text x="492" y="484">lint + fact-checker</text>
         <text x="820" y="484">voice + render checks</text>
-        <text x="1148" y="484">upload-checker GO</text>
+        <text x="1148" y="484">thumbnail + upload GO</text>
         <text x="1476" y="484">lesson becomes check</text>
       </g>
     </g>
@@ -111,11 +111,12 @@ svg{background-color:#0d1117}
       <text x="48" y="690">Measure in code. Exit 1 means fix the work, not the check.</text>
       <text x="878" y="690">Independent eyes. Never the agent that made the work.</text>
     </g>
-    <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="19" fill="#294f82">
-      <text x="48" y="728">outliers · facts_check · script_lint · voice_check</text>
-      <text x="48" y="758">render_check · upload · retention</text>
-      <text x="878" y="728">topic-skeptic · fact-checker · script-auditor</text>
-      <text x="878" y="758">render-auditor · upload-checker · privacy-scanner</text>
+    <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="18" fill="#294f82">
+      <text x="48" y="722">outliers · demand · facts_check · script_lint</text>
+      <text x="48" y="747">voice_check · pick_takes · render_check · text_dose</text>
+      <text x="48" y="772">thumb_check · dub_fit · upload · retention · pulse</text>
+      <text x="878" y="722">topic-skeptic · fact-checker · script-auditor</text>
+      <text x="878" y="747">render-auditor · upload-checker · privacy-scanner</text>
     </g>
   </g>
 </svg>

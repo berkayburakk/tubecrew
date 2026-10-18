@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "tubecrew",
-      "description": "A YouTube production crew for Claude Code: evidence-based topics, sourced facts, human-sounding scripts, code gates for voiceover and render, independent reviewers, private uploads and retention by scene.",
-      "version": "0.2.0",
+      "description": "A YouTube production crew for Claude Code: evidence-based topics, sourced facts, human-sounding scripts, code gates for voiceover and render, independent reviewers, thumbnail checks, dubbing, private uploads, retention and channel analytics.",
+      "version": "0.3.0",
       "source": "./",
       "author": {
         "name": "berkayburakk",

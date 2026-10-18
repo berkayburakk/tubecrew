@@ -40,8 +40,11 @@ signposts, which is why step 5 exists.
 python $SKILL/scripts/script_lint.py script.md --phrase "<search phrase>" --gate
 ```
 
-It fails on sentences over 30 words, AI-vocabulary hits and a search phrase that arrives after 30 seconds. The
-pattern counts it prints are guidance for the reviewer, not a verdict.
+It fails on sentences over 30 words, AI-vocabulary hits, vague attributions with no named source ("studies
+show") and a search phrase that arrives after 30 seconds. It also warns about the opening: "you already know"
+lines, no number or a long first sentence early, "in this video" up front, a late `[INTRO]` marker. Warnings and
+pattern counts are guidance for the reviewer, not a verdict. When visuals are keyed to words, add
+`--triggers <file>`; a word a rewrite removed exits 1.
 
 ## 5. Independent A/B review
 
@@ -49,10 +52,18 @@ Give the `script-auditor` agent both files (`script-v1.md` as A, `script.md` as 
 wrote either version. It returns A, B or "B with fix" per paragraph and a must-fix list. Merge its verdicts into
 `script.md`, lint again.
 
+Once audio or a translation exists, tell the auditor: B wins a paragraph only for a strong AI pattern or a
+meaning or listening problem. Every changed paragraph means new voice, shifted timings, new translations and new
+chapter times (`references/ai-patterns.md`, "Text that is already voiced or translated").
+
 ## 6. Numbers, then voice
 
 Run `facts_check.py facts.json --script script.md` (research-facts skill), then the `fact-checker` agent. Only
 after both pass does anyone record or generate the voiceover.
+
+Write for the voice engine too: spell out numbers and "%" only in the text sent to TTS (the script and captions
+keep digits), and avoid em-dashes and tiny list fragments, which TTS reads with odd pauses. The `check-voiceover`
+skill has the detail.
 
 ## Report back
 

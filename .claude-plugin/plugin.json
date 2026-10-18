@@ -1,7 +1,7 @@
 {
   "name": "tubecrew",
-  "description": "A YouTube production crew for Claude Code: find topics from evidence, source every number, write scripts that sound human, gate voiceover and render in code, review with independent agents, upload privately, then learn from retention by scene.",
-  "version": "0.2.0",
+  "description": "A YouTube production crew for Claude Code: find topics from evidence, source every number, write scripts that sound human, gate voiceover and render in code, review with independent agents, check thumbnails, dub into other languages, upload privately, then learn from retention and channel analytics.",
+  "version": "0.3.0",
   "author": {
     "name": "berkayburakk",
     "url": "https://github.com/berkayburakk"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/berkayburakk/tubecrew",
   "repository": "https://github.com/berkayburakk/tubecrew",
   "license": "MIT",
-  "keywords": ["youtube", "video", "content-creation", "scripts", "retention", "quality-gates", "remotion", "skills", "agents"]
+  "keywords": ["youtube", "video", "content-creation", "scripts", "retention", "quality-gates", "remotion", "thumbnails", "dubbing", "analytics", "skills", "agents"]
 }

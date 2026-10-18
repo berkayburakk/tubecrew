@@ -4,7 +4,7 @@
 
 ### A YouTube production crew for your coding agent.
 
-**Topics chosen from evidence. Every number sourced. Quality gates in code. Uploads stay private until you publish.**
+**Topics chosen from evidence. Every number sourced. Quality gates in code. Uploads stay private until you decide.**
 
 [![tests](https://img.shields.io/github/actions/workflow/status/berkayburakk/tubecrew/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/berkayburakk/tubecrew/actions/workflows/test.yml)
 [![release](https://img.shields.io/github/v/release/berkayburakk/tubecrew?style=flat-square&color=294f82)](https://github.com/berkayburakk/tubecrew/releases)
@@ -20,15 +20,15 @@
 </div>
 
 > [!NOTE]
-> tubecrew never publishes on its own. Uploads are always private, and publishing, scheduling and anything
-> irreversible remain a human decision in YouTube Studio.
+> tubecrew never publishes on its own. Uploads are always private. A video goes public only when you publish it in
+> YouTube Studio, or when you write a time into `upload.json` and pass `--schedule` yourself.
 
 ---
 
 tubecrew turns Claude Code or Codex into a production line for YouTube videos. It finds topics in what is already
 outperforming in your niche, keeps every figure tied to a primary source, writes scripts meant to be spoken, checks
-the voiceover and the render in code, has independent agents review the work, uploads privately, and tells you
-which scene viewers left on.
+the voiceover, the render and the thumbnail in code, has independent agents review the work, dubs into other
+languages, uploads privately, and tells you which scene viewers left on and what to fix next.
 
 Thinking stays with you and the model: which topic, what story, what looks right. Repetitive work goes to small
 scripts with exit codes: counting words, measuring loudness, matching numbers to sources, checking metadata
@@ -78,7 +78,8 @@ Set up tubecrew.
 The `setup` skill checks what you already have (Remotion, HyperFrames, Wan, CosyVoice, Codex, FFmpeg, your GPU),
 asks about the subscriptions it cannot see (ElevenLabs, a ChatGPT plan for Codex), and suggests a tool for every
 station. With your permission it installs the free pieces, including the Remotion and HyperFrames agent skills,
-and saves your choices so every later video uses the same stack. See [Works with your stack](#works-with-your-stack).
+and saves your choices so every later video uses the same stack. It can also turn on an opt-in publish guard: a
+hook that makes the agent ask you before any upload command. See [Works with your stack](#works-with-your-stack).
 
 ### Requirements
 
@@ -87,8 +88,9 @@ and saves your choices so every later video uses the same stack. See [Works with
 | All scripts | Python 3.9+ (`python` on Windows, `python3` on macOS and Linux) |
 | Render check | `ffmpeg` and `ffprobe` on `PATH` |
 | Topic research | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) |
-| Upload and retention | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
+| Upload, retention and channel pulse | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
 | Transcribing audio | `pip install faster-whisper` (optional; any SRT, VTT or Whisper JSON transcript also works) |
+| On-screen text dose | `pip install rapidocr-onnxruntime` (optional) |
 | Motion design | Node.js 18+ for Remotion, HyperFrames and `morph-clips` (`setup` installs the engines; `morph-clips` installs its own Playwright) |
 
 ### Ask your agent
@@ -107,7 +109,15 @@ Check this render before I upload it: render/final.mp4
 ```
 
 ```text
-Why did viewers stop watching my video <video id>?
+Which of these two thumbnails works better at feed size?
+```
+
+```text
+Make a Spanish version of this video.
+```
+
+```text
+How is my channel doing? Why did viewers stop watching my video <video id>?
 ```
 
 ### Run the gates yourself
@@ -116,8 +126,10 @@ Every gate is a plain script you can run from a terminal or CI:
 
 ```bash
 python skills/find-topic/scripts/outliers.py @channel-one @channel-two --min-multiple 2
+python skills/find-topic/scripts/demand.py "how telescopes unfold" --wiki "James Webb Space Telescope"
 python skills/research-facts/scripts/facts_check.py facts.json --script script.md
 python skills/check-render/scripts/render_check.py render/final.mp4 --srt captions.srt
+python skills/check-thumbnail/scripts/thumb_check.py thumb-a.jpg thumb-b.jpg --project my-video/
 python skills/upload-private/scripts/upload.py my-video/            # dry run, uploads nothing
 ```
 
@@ -141,9 +153,12 @@ the topic, the first 60 to 90 seconds, and publishing.
 - **The maker never reviews.** Fact-checking, script review, render review and the upload decision go to agents
   that did not produce the work. Drafts and experiments skip review; anything that ships does not.
 - **Measured after publishing.** Retention comes straight from the YouTube Analytics API and is mapped onto your
-  chapters or script, so "viewers left at 2:14" becomes "viewers left during the setup paragraph".
-- **Light on context.** No session hooks and nothing injected at startup. All ten skills and six agents add
-  about 2k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
+  chapters or script, so "viewers left at 2:14" becomes "viewers left during the setup paragraph". `channel-pulse`
+  ends with one diagnosis, such as "YouTube tested your video and cut it: fix the packaging, not the topic".
+- **Lessons become checks.** A decisions ledger with T+30 and T+90 rows, numbered lessons, and a gate counter
+  that shows which checks still catch anything.
+- **Light on context.** No session hooks and nothing injected at startup. All thirteen skills and six agents add
+  about 2.6k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
 
 ## What's inside
 
@@ -151,15 +166,18 @@ the topic, the first 60 to 90 seconds, and publishing.
 
 | Skill | What it does | Script |
 |---|---|---|
-| `setup` | Detects the creator's tools and subscriptions, suggests a stack per station, installs the free pieces | `detect_stack.py` |
-| `produce-video` | Keeps the order and the gates from idea to private upload | - |
-| `find-topic` | Ranks competitor videos by how far they beat their own channel's median; checks search intent and a reachable step for small channels | `outliers.py` |
+| `setup` | Detects the creator's tools and subscriptions, suggests a stack per station, installs the free pieces, offers the publish guard | `detect_stack.py`, `publish_guard.py` |
+| `produce-video` | Keeps the order and the gates from idea to private upload, plus the decisions ledger and lessons | - |
+| `find-topic` | Ranks competitor videos by how far they beat their own channel's median; measures demand from free sources and a reachable step for small channels | `outliers.py`, `demand.py` |
 | `research-facts` | One `facts.json` with every figure's source, type and date; gates the script against it | `facts_check.py` |
 | `write-script` | An opening built for the first 30 seconds, a humanizing pass against 26 AI-writing patterns, a mechanical lint | `script_lint.py` |
-| `check-voiceover` | Compares what the voiceover actually said with the script: skipped phrases, wrong numbers, repeats | `voice_check.py` |
-| `check-render` | Loudness, silent tails, black frames, a frozen hook and subtitle timing in one pass | `render_check.py` |
-| `upload-private` | Metadata limits, chapter rules, hash-bound verdicts and a resumable, private-only upload | `upload.py` |
+| `check-voiceover` | Compares what the voiceover said with the script, paragraph by paragraph; picks the best take and trims long pauses | `voice_check.py`, `pick_takes.py`, `trim_silence.py` |
+| `check-render` | Loudness, silences, black and frozen frames, a hook that really moves, subtitles against the spoken words; the final mix and the text dose | `render_check.py`, `normalize_audio.py`, `text_dose.py` |
+| `check-thumbnail` | Format, size, dark area, clutter, text rules and title repetition, with a feed-size preview of every candidate | `thumb_check.py` |
+| `localize` | Meaning-first translation that keeps every number, a native-listener audit, and a timing check for each dubbed paragraph | `dub_fit.py` |
+| `upload-private` | Metadata limits, chapter rules, translations, hash-bound verdicts, token health and a resumable, private-only upload | `upload.py` |
 | `retention-by-scene` | Opening loss, cliffs, slide and rewatch bumps, mapped to chapters or script sections | `retention.py` |
+| `channel-pulse` | Recent videos, traffic sources, search terms and whether YouTube tested each video, ending in one diagnosis | `pulse.py` |
 | `morph-clips` | Motion-graphic B-roll timed to your words: one shape that morphs and never cuts | `morph.mjs` |
 
 ### Review agents
@@ -183,6 +201,7 @@ my-video/
 ├── script.md       the spoken script
 ├── upload.json     title, description, tags, disclosure flags
 ├── voice/          narration audio and its transcript
+├── dub/            translated scripts and voices, one folder per language
 ├── render/         the final render
 └── qa/             gate results and review verdicts
 ```
@@ -205,8 +224,10 @@ projects, and they are the defaults it suggests:
 | Second model | [Codex CLI](https://github.com/openai/codex) | Repeats the fact-check with a different model family, read-only | ChatGPT plan or API key |
 | Transcription | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Word timings for the voiceover check and captions | Free, MIT |
 | Research | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Public channel catalogs for outlier research | Free, Unlicense |
-| Measurement | [FFmpeg](https://ffmpeg.org) | Loudness, black frames, freezes and silence in one pass | Free |
-| Upload and analytics | [YouTube Data API](https://developers.google.com/youtube/v3) · [YouTube Analytics API](https://developers.google.com/youtube/analytics) | Private uploads and retention curves | Free quota, your own Google Cloud project |
+| Research | [Wikimedia pageviews](https://wikimedia.org/api/rest_v1/) | Curiosity for a topic, measured against one that already worked | Free, no key |
+| Measurement | [FFmpeg](https://ffmpeg.org) | Loudness, black frames, freezes, motion and silence in one pass; the final mix | Free |
+| Text on screen | [RapidOCR](https://github.com/RapidAI/RapidOCR) | Optional OCR for the text-dose check | Free, Apache-2.0 |
+| Upload and analytics | [YouTube Data API](https://developers.google.com/youtube/v3) · [YouTube Analytics API](https://developers.google.com/youtube/analytics) | Private uploads, retention curves and the channel pulse | Free quota, your own Google Cloud project |
 
 The full catalog, with when to pick which, is in
 [`skills/setup/references/tools.md`](skills/setup/references/tools.md). Thanks to the authors of all of these
@@ -214,7 +235,8 @@ projects.
 
 ## What tubecrew will never do
 
-- Make a video public, schedule it, or delete anything.
+- Make a video public or delete anything. A schedule happens only when you write `publish_at` into `upload.json`
+  and pass `--schedule`; the video stays private until YouTube publishes it at that time.
 - Upload a file that has not passed the render check. The render review and the upload review must approve the
   same file too; skipping them takes an explicit `--skip-review "<reason>"`, and the reason is logged.
 - Store tokens or keys in your project, or use any credentials other than your own.
@@ -227,8 +249,10 @@ projects.
 <details>
 <summary><strong>Does tubecrew upload or publish videos for me?</strong></summary>
 
-It uploads only when you run the upload script with `--upload`, and always as private. Publishing, scheduling and
-visibility changes happen in YouTube Studio, by you.
+It uploads only when you run the upload script with `--upload`, and always as private. Publishing and visibility
+changes happen in YouTube Studio, by you. If you want a scheduled release, write `publish_at` into `upload.json` and
+add `--schedule`; the script reads the status back to confirm the video is still private with that publish time.
+For one more layer, `setup` can install a publish guard hook that makes the agent ask you before any upload command.
 </details>
 
 <details>
@@ -246,7 +270,8 @@ CosyVoice or your own recording.
 Mostly, yes. The render and upload gates do not depend on language, and the voiceover check works with any
 language faster-whisper supports, including number formats that use a decimal comma. The script lint's
 AI-vocabulary lists and the fact check's number parsing assume English; the lint's other measurements (sentence
-length, runtime, phrase timing) work in any language.
+length, runtime, phrase timing) work in any language. `localize` translates and dubs a finished video and adds
+translated titles and descriptions to the upload.
 </details>
 
 <details>

@@ -13,7 +13,7 @@ spec.loader.exec_module(ds)
 BARE = {"python": "3.12.0", "ffmpeg": None, "ffprobe": False, "yt_dlp": None, "node": None, "npx": False,
         "git": True, "codex": None, "claude": True, "gpu": None, "faster_whisper": False, "google_libs": False,
         "oauth_client": False, "elevenlabs_key": False, "remotion": False, "hyperframes": False, "comfyui": False,
-        "cosyvoice": False}
+        "cosyvoice": False, "ocr": False}
 
 
 def facts(**over):

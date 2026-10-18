@@ -13,22 +13,31 @@ Why
 How to run
     python voice_check.py script.md voice/narration.srt
     python voice_check.py script.md voice/narration.wav --language en --model small
+    python voice_check.py script.md voice/narration.json --wpm-band 130,190     (a recorded human voice)
 
     Transcript formats: SRT, WebVTT, Whisper-style JSON ({"segments": [{"start", "end", "text",
     "words": [{"word", "start", "end"}]}]}, a plain list of segments, or a list of words), or plain text.
     Audio (wav, mp3, m4a, flac, ogg, opus, aac) is transcribed with faster-whisper when it is installed
     (`pip install faster-whisper`); the transcript is saved next to the report so a re-run can reuse it.
+    Decoding runs with condition_on_previous_text=False: on stitched or patched audio Whisper otherwise
+    carries context across a seam and writes words that were never said.
 
     The script is cleaned before comparing: headings, `>` note lines, HTML comments, code blocks, tables,
     `[[cue]]` anchors, bracketed stage directions such as [ON SCREEN: ...] and emphasis markers are dropped.
     A script that still contains {placeholder} tokens must be compiled first (exit 2).
 
+    Paragraphs: every line of the cleaned script is one paragraph (write one paragraph per line, no hard
+    wrapping). The report lists each paragraph with its word count, accuracy and fidelity, and, when the
+    transcript has word timings, its start, end, duration and words per minute over the speech span.
+
     Report: <script folder>/qa/voice-check.json unless --out is given. Paths in it are relative.
 
 Severity
-    FAIL  any difference that involves a number; a skipped run of 3 or more script words
+    FAIL  any difference that involves a number; a skipped run of 3 or more script words; a paragraph whose
+          pace is outside --wpm-fail-band (default 100-300 wpm: a repeat loop, or a swallowed sentence)
     WARN  an inserted run of 3+ words that repeats nearby script text (stray repeat); any other difference
-          (often the recognizer mishearing a name)
+          (often the recognizer mishearing a name); a paragraph whose pace is outside --wpm-band
+          (default 150-215 wpm)
 
 Exit codes
     0  no FAIL     1  at least one FAIL     2  usage or environment error
@@ -50,13 +59,26 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "voice_check.py"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 SKIP_FAIL_WORDS = 3        # a run of 3+ missing script words is a skipped phrase, not recognizer noise
 REPEAT_MIN_WORDS = 3       # an extra run this long that matches nearby script text is a stray repeat
 REPEAT_WINDOW_WORDS = 40   # how far around the insertion point to look for the repeated text
 CONTEXT_WORDS = 5          # script words shown on each side of a difference
 HUMAN_MAX_ISSUES = 60      # issues printed in human output (all of them go to the report)
+WHISPER_BEAM_SIZE = 5      # faster-whisper's own default; a wider beam is slower and rarely changes a clean take
+
+# Paragraph pace, in words per minute over the speech span (first word start to last word end).
+# Calibrated on generated narration: healthy paragraphs land around 170-200 wpm; a repeat loop (the model reading
+# the paragraph again and again) drops a paragraph far below 100; a swallowed sentence pushes it up, because the
+# script's words are counted against a shorter span. A dense, comma-heavy paragraph can honestly read at 125-150,
+# so leaving the narrow band only warns (read it as a question), and only leaving the wide band fails.
+# Recorded human narration is slower: pass --wpm-band 130,190 for it. Both bands are configurable.
+WPM_WARN_BAND = (150.0, 215.0)
+WPM_FAIL_BAND = (100.0, 300.0)
+WPM_MIN_WORDS = 6          # a shorter paragraph's pace is mostly noise, so it gets no pace verdict
+INSPECT_BELOW = 0.95       # a paragraph whose fidelity is under this is worth a listen even without a FAIL
+EXCERPT_CHARS = 60         # paragraph text shown in the report and the table
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac"}
 # Languages that write 1.000,5 instead of 1,000.5 (only used to read thousands separators consistently).
@@ -120,10 +142,13 @@ _BRACKET_RE = re.compile(r"\[[^\]\n]*\]")
 _HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
 _EMPHASIS_RE = re.compile(r"\*+|~~|`+|(?<!\w)_+(?=\w)|(?<=\w)_+(?!\w)")
 _PLACEHOLDER_RE = re.compile(r"\{[^{}\n]*\}")
+# a paragraph id at the start of a line ("P01", "**P01**", "P01.") labels the paragraph; it is never spoken
+_PARA_ID_RE = re.compile(r"^(?:\*\*|__)?[Pp]\d+(?:\*\*|__)?[.:)]?(?:\s+|$)")
 
 
-def clean_script(markdown: str) -> str:
-    """Markdown script -> only the words meant to be spoken, one paragraph per line."""
+def clean_script(markdown: str, keep_ids: bool = False) -> str:
+    """Markdown script -> only the words meant to be spoken, one paragraph per line. Paragraph ids (P01) are
+    dropped unless keep_ids is set (dub_fit.py matches paragraphs by id)."""
     text = markdown.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     text = _FRONT_MATTER_RE.sub("", text)
     text = _COMMENT_RE.sub(" ", text)
@@ -136,6 +161,8 @@ def clean_script(markdown: str) -> str:
         if _RULE_RE.match(line):
             continue
         line = _LIST_RE.sub("", line)
+        if not keep_ids:
+            line = _PARA_ID_RE.sub("", line)
         line = _IMAGE_RE.sub(" ", line)
         line = _LINK_RE.sub(r"\1", line)
         line = _CUE_RE.sub(" ", line)
@@ -150,6 +177,21 @@ def clean_script(markdown: str) -> str:
 
 def find_placeholders(text: str) -> list[str]:
     return _PLACEHOLDER_RE.findall(text)
+
+
+def paragraph_texts(spoken: str) -> list[str]:
+    """clean_script output -> its paragraphs, one per line. Paragraph numbers in every report (and the
+    candidate folders of pick_takes.py) are 1-based positions in this list, so the numbering has one source."""
+    return [line for line in spoken.split("\n") if line.strip()]
+
+
+def word_count(text: str) -> int:
+    """Words as written (whitespace separated, with at least one letter or digit): the unit of words per minute."""
+    return sum(1 for word in text.split() if any(c.isalnum() for c in word))
+
+
+def excerpt(text: str, limit: int = EXCERPT_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
 
 
 # ----------------------------------------------------------------------------------------------- normalizing
@@ -460,31 +502,116 @@ def heard_tokens(pieces: list[dict], language: str = "en") -> tuple[list[str], l
     return tokens, tok_times
 
 
-def transcribe(audio: Path, language: str | None, model_name: str) -> dict:
-    """Transcribe audio with faster-whisper (word timestamps on). Raises UsageError when unavailable."""
-    try:
-        from faster_whisper import WhisperModel  # optional dependency, imported only here
-    except ImportError as exc:
-        raise UsageError("transcribing audio needs faster-whisper: pip install faster-whisper "
-                         "(or pass an existing transcript: SRT, VTT or Whisper JSON)") from exc
+class Whisper:
+    """A faster-whisper model, loaded on first use and reused for every file (pick_takes.py transcribes many
+    takes). Word timestamps are on, and condition_on_previous_text is off: on stitched or patched audio the
+    decoder otherwise carries context across a seam and invents words. Raises UsageError when unavailable."""
 
-    def run(device: str, compute_type: str) -> dict:
-        model = WhisperModel(model_name, device=device, compute_type=compute_type)
-        segments, info = model.transcribe(str(audio), language=_lang(language) or None, word_timestamps=True)
+    def __init__(self, model_name: str, beam_size: int = WHISPER_BEAM_SIZE):
+        try:
+            from faster_whisper import WhisperModel  # optional dependency, imported only here
+        except ImportError as exc:
+            raise UsageError("transcribing audio needs faster-whisper: pip install faster-whisper "
+                             "(or pass an existing transcript: SRT, VTT or Whisper JSON)") from exc
+        self._factory = WhisperModel
+        self.model_name = model_name
+        self.beam_size = beam_size
+        self._model = None
+        self._device = None
+
+    def _load(self, device: str, compute_type: str) -> None:
+        self._model = self._factory(self.model_name, device=device, compute_type=compute_type)
+        self._device = device
+
+    def _run(self, audio: Path, language: str | None) -> dict:
+        lang = _lang(language) or None
+        decode = {"beam_size": self.beam_size, "condition_on_previous_text": False}
+        try:
+            segments, info = self._model.transcribe(str(audio), language=lang, word_timestamps=True, **decode)
+        except TypeError:  # a stand-in model without these options; the transcript records what was used
+            decode = {}
+            segments, info = self._model.transcribe(str(audio), language=lang, word_timestamps=True)
         out = []
         for seg in segments:
             words = [{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}
                      for w in (seg.words or [])]
             out.append({"start": round(seg.start, 3), "end": round(seg.end, 3), "text": seg.text, "words": words})
-        return {"language": getattr(info, "language", language), "model": model_name, "segments": out}
+        return {"language": getattr(info, "language", language), "model": self.model_name, "decode": decode,
+                "segments": out}
 
-    try:
-        return run("auto", "default")
-    except Exception as first:  # noqa: BLE001 - GPU runtimes fail in many ways; fall back to CPU once
+    def transcribe(self, audio: Path, language: str | None) -> dict:
         try:
-            return run("cpu", "int8")
-        except Exception as exc:  # noqa: BLE001
-            raise UsageError(f"faster-whisper could not transcribe {audio.name}: {exc or first}") from exc
+            if self._model is None:
+                self._load("auto", "default")
+            return self._run(audio, language)
+        except Exception as first:  # noqa: BLE001 - GPU runtimes fail in many ways; fall back to CPU once
+            if self._device == "cpu":
+                raise UsageError(f"faster-whisper could not transcribe {Path(audio).name}: {first}") from first
+            try:
+                self._load("cpu", "int8")
+                return self._run(audio, language)
+            except Exception as exc:  # noqa: BLE001
+                raise UsageError(f"faster-whisper could not transcribe {Path(audio).name}: {exc or first}") from exc
+
+
+def transcribe(audio: Path, language: str | None, model_name: str, beam_size: int = WHISPER_BEAM_SIZE) -> dict:
+    """Transcribe one audio file with faster-whisper (word timestamps on). Raises UsageError when unavailable."""
+    return Whisper(model_name, beam_size).transcribe(audio, language)
+
+
+def timing_kind(pieces: list[dict]) -> str:
+    """'word' when every piece has word-level times, 'segment' when times are per cue, 'none' without times."""
+    if all(p.get("start") is None for p in pieces):
+        return "none"
+    if all(p.get("word_level") for p in pieces):
+        return "word"
+    return "segment"
+
+
+def speech_span(times: list[tuple]) -> tuple[float, float] | None:
+    """(first word start, last word end) of the given token times, or None when they carry no times."""
+    starts = [t[0] for t in times if t[0] is not None]
+    ends = [t[1] for t in times if t[1] is not None]
+    if not starts or not ends:
+        return None
+    return min(starts), max(ends)
+
+
+def parse_band(text: str) -> tuple[float, float] | None:
+    """'150,215' -> (150.0, 215.0); 'off' -> None. Raises ValueError for anything else."""
+    if text.strip().lower() in ("off", "none"):
+        return None
+    parts = text.replace(" ", "").split(",")
+    if len(parts) != 2:
+        raise ValueError(f"expected LO,HI or off, got {text!r}")
+    lo, hi = float(parts[0]), float(parts[1])
+    if not 0 < lo < hi:
+        raise ValueError(f"expected 0 < LO < HI, got {text!r}")
+    return lo, hi
+
+
+def _band_arg(text: str) -> tuple[float, float] | None:
+    try:
+        return parse_band(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def pace_verdict(words: int, span: tuple[float, float] | None, warn_band, fail_band) -> dict:
+    """Words per minute over a speech span and its verdict: pace ok | slow | fast | None (not judged),
+    status PASS | WARN | FAIL. Paragraphs shorter than WPM_MIN_WORDS words are measured but not judged."""
+    if span is None or span[1] <= span[0]:
+        return {"wpm": None, "pace": None, "status": PASS, "band": None}
+    wpm = words / ((span[1] - span[0]) / 60.0)
+    result = {"wpm": round(wpm), "pace": "ok", "status": PASS, "band": None}
+    if words < WPM_MIN_WORDS:
+        result["pace"] = None
+        return result
+    for band, status in ((fail_band, FAIL), (warn_band, WARN)):
+        if band and not band[0] <= wpm <= band[1]:
+            result.update(pace="slow" if wpm < band[0] else "fast", status=status, band=band)
+            break
+    return result
 
 
 # ----------------------------------------------------------------------------------------------- alignment
@@ -550,6 +677,113 @@ def compare(script: list[str], heard: list[str], times: list[tuple] | None = Non
             "verdict": FAIL if any(i["status"] == FAIL for i in issues) else PASS}
 
 
+def _insert_owner(i1: int, extra: list[str], owner_of_script: list[int], paragraph_tokens: list[list[str]]) -> int:
+    """Paragraph that extra (inserted) heard words belong to. Inside a paragraph: that paragraph. Between two
+    paragraphs: the one they resemble more (the aligner may match the last copy of a repeated paragraph, leaving
+    the earlier copies at the end of the paragraph before), else the one before them."""
+    if i1 <= 0:
+        return owner_of_script[0]
+    before = owner_of_script[i1 - 1]
+    if i1 >= len(owner_of_script) or owner_of_script[i1] == before:
+        return before
+    after = owner_of_script[i1]
+
+    def shared(k: int) -> int:
+        blocks = difflib.SequenceMatcher(None, extra, paragraph_tokens[k], autojunk=False).get_matching_blocks()
+        return sum(b.size for b in blocks)
+
+    return after if shared(after) > shared(before) else before
+
+
+def _heard_owners(owner_of_script: list[int], paragraph_tokens: list[list[str]], heard: list[str],
+                  opcodes) -> list[int]:
+    """Paragraph index of every heard token. A matched token takes its script word's paragraph, a replaced run is
+    spread over the script words it replaces, and extra words go to the paragraph they repeat (see _insert_owner),
+    so a repeat loop inflates the duration of the paragraph it repeats."""
+    owners = [0] * len(heard)
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == "insert":
+            owner = _insert_owner(i1, heard[j1:j2], owner_of_script, paragraph_tokens)
+        for j in range(j1, j2):
+            if tag == "equal":
+                owners[j] = owner_of_script[i1 + j - j1]
+            elif tag == "replace":
+                owners[j] = owner_of_script[min(i2 - 1, i1 + (j - j1) * (i2 - i1) // (j2 - j1))]
+            else:
+                owners[j] = owner
+    return owners
+
+
+def check_paragraphs(paragraphs: list[str], paragraph_tokens: list[list[str]], heard: list[str],
+                     times: list[tuple], issues: list[dict], word_timing: bool,
+                     warn_band=WPM_WARN_BAND, fail_band=WPM_FAIL_BAND) -> tuple[list[dict], list[dict]]:
+    """Per-paragraph rows and the pace issues to add to the issue list.
+
+    `paragraph_tokens[k]` are the normalized tokens of `paragraphs[k]`; joined in order they must be the script
+    tokens that `issues` was computed from (compare()). Each issue gets a 1-based "paragraph" field. Pace (words
+    per minute over the paragraph's speech span) is only judged when `word_timing` is True."""
+    script = [tok for toks in paragraph_tokens for tok in toks]
+    owner_of_script = [k for k, toks in enumerate(paragraph_tokens) for _ in toks]
+    if not script:
+        return [], []
+    matcher = difflib.SequenceMatcher(None, script, heard, autojunk=False)
+    opcodes = matcher.get_opcodes()
+    owners = _heard_owners(owner_of_script, paragraph_tokens, heard, opcodes)
+    matched = [0] * len(paragraphs)
+    for tag, i1, i2, _j1, _j2 in opcodes:
+        if tag == "equal":
+            for i in range(i1, i2):
+                matched[owner_of_script[i]] += 1
+    # compare() writes one issue per difference, in order, so issue n is difference n; it then takes the paragraph
+    # of its first heard word. Deletions, and issues from elsewhere, go by their script position.
+    differences = [op for op in opcodes if op[0] != "equal"]
+    paired = len(differences) == len(issues) and all(
+        op[0] == issue.get("kind") and op[1] == issue.get("script_word") for op, issue in zip(differences, issues))
+    for n, issue in enumerate(issues):
+        i = issue.get("script_word", 0)
+        if paired and differences[n][3] < differences[n][4]:
+            k = owners[differences[n][3]]
+        elif issue.get("kind") == "insert":
+            k = owner_of_script[i - 1] if i > 0 else owner_of_script[0]
+        else:
+            k = owner_of_script[min(i, len(script) - 1)]
+        issue["paragraph"] = k + 1
+    first_word = [0] * len(paragraphs)
+    position = 0
+    for k, toks in enumerate(paragraph_tokens):
+        first_word[k] = position
+        position += len(toks)
+
+    rows, pace_issues = [], []
+    for k, text in enumerate(paragraphs):
+        own = [j for j, owner in enumerate(owners) if owner == k]
+        own_heard = [heard[j] for j in own]
+        toks = paragraph_tokens[k]
+        fidelity = difflib.SequenceMatcher(None, toks, own_heard, autojunk=False).ratio() if toks else 1.0
+        words = word_count(text)
+        row = {"paragraph": k + 1, "excerpt": excerpt(text), "words": words, "script_words": len(toks),
+               "matched_words": matched[k], "accuracy": round(matched[k] / len(toks), 4) if toks else 1.0,
+               "fidelity": round(fidelity, 4), "start": None, "end": None, "duration": None, "wpm": None,
+               "pace": None}
+        span = speech_span([times[j] for j in own]) if own else None
+        if span is not None:
+            row.update(start=round(span[0], 2), end=round(span[1], 2), duration=round(span[1] - span[0], 2))
+        if word_timing:
+            verdict = pace_verdict(words, span, warn_band, fail_band)
+            row.update(wpm=verdict["wpm"], pace=verdict["pace"])
+            if verdict["status"] != PASS:
+                lo, hi = verdict["band"]
+                pace_issues.append({
+                    "status": verdict["status"], "reason": verdict["pace"], "kind": "pace",
+                    "expected": f"{lo:g}-{hi:g} wpm", "heard": f"{verdict['wpm']} wpm",
+                    "context": f"p{k + 1}: {excerpt(text)}", "script_word": first_word[k], "paragraph": k + 1,
+                    "start": row["start"], "end": row["end"]})
+        statuses = [i["status"] for i in issues + pace_issues if i.get("paragraph") == k + 1]
+        row["status"] = FAIL if FAIL in statuses else (WARN if WARN in statuses else PASS)
+        rows.append(row)
+    return rows, pace_issues
+
+
 # ----------------------------------------------------------------------------------------------- main
 
 def _utf8_stdout() -> None:
@@ -585,8 +819,38 @@ def human_lines(report: dict, report_rel: str) -> list[str]:
         lines.append(f"... {len(issues) - HUMAN_MAX_ISSUES} more in the report")
     if not issues:
         lines.append("No differences.")
+    lines += paragraph_lines(report)
     lines.append(f"VERDICT: {report['verdict']}")
     lines.append(f"Report: {report_rel}")
+    return lines
+
+
+def _band_text(band) -> str:
+    return "off" if not band else f"{band[0]:g}-{band[1]:g} wpm"
+
+
+def paragraph_lines(report: dict) -> list[str]:
+    rows = report.get("paragraphs") or []
+    if not rows:
+        return []
+    pace = report.get("pace") or {}
+    if pace.get("measured"):
+        how = (f"pace warns outside {_band_text(pace.get('warn_band'))}, "
+               f"fails outside {_band_text(pace.get('fail_band'))}")
+    else:
+        how = "pace not measured: it needs word timings (Whisper JSON with words, or the audio itself)"
+    flagged = [r for r in rows if r["status"] != PASS or r["fidelity"] < INSPECT_BELOW]
+    lines = [f"Paragraphs: {len(rows)} ({how})"]
+    for r in flagged:
+        when = f"{fmt_time(r['start'])}-{fmt_time(r['end'])}" if r["start"] is not None else "no times"
+        speed = f"{r['wpm']} wpm" + (f" {r['pace']}" if r["pace"] not in (None, "ok") else "") if r["wpm"] else ""
+        lines.append(f"  p{r['paragraph']:<3} {r['status']:<4}  {r['words']:>3} words  {when}  {speed:<14}  "
+                     f"fidelity {r['fidelity']:.2f}  \"{r['excerpt']}\"")
+    failing = report.get("failing_paragraphs") or []
+    if failing:
+        lines.append("Regenerate or re-record paragraphs: " + ", ".join(str(n) for n in failing))
+    elif not flagged:
+        lines.append("  every paragraph is clean")
     return lines
 
 
@@ -599,6 +863,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("transcript", help="SRT, VTT, Whisper JSON or plain-text transcript, or an audio file")
     parser.add_argument("--language", default="en", help="language code of the narration (default en)")
     parser.add_argument("--model", default="small", help="faster-whisper model for audio input (default small)")
+    parser.add_argument("--beam-size", type=int, default=WHISPER_BEAM_SIZE,
+                        help=f"faster-whisper beam size for audio input (default {WHISPER_BEAM_SIZE})")
+    parser.add_argument("--wpm-band", type=_band_arg, default=WPM_WARN_BAND, metavar="LO,HI",
+                        help="paragraph pace outside this band warns (default %g,%g; 'off' disables)"
+                             % WPM_WARN_BAND)
+    parser.add_argument("--wpm-fail-band", type=_band_arg, default=WPM_FAIL_BAND, metavar="LO,HI",
+                        help="paragraph pace outside this band fails (default %g,%g; 'off' disables)"
+                             % WPM_FAIL_BAND)
     parser.add_argument("--out", help="report path (default <script folder>/qa/voice-check.json)")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
@@ -621,14 +893,16 @@ def main(argv: list[str] | None = None) -> int:
             shown = ", ".join(sorted(set(placeholders))[:5])
             raise UsageError(f"the script still has template placeholders ({shown}); compile the template to "
                              "the final spoken text first")
-        script_tokens = normalize(spoken, args.language)
+        paragraphs = paragraph_texts(spoken)
+        paragraph_tokens = [normalize(text, args.language) for text in paragraphs]
+        script_tokens = [tok for toks in paragraph_tokens for tok in toks]
         if not script_tokens:
             raise UsageError("the script has no spoken text after removing headings, notes and directions")
         report["script"] = rel_path(script_path, base)
         report["script_sha256"] = sha256_file(script_path)
 
         if source_path.suffix.lower() in AUDIO_EXTENSIONS:
-            data = transcribe(source_path, args.language, args.model)
+            data = transcribe(source_path, args.language, args.model, args.beam_size)
             transcript_path = out_path.parent / (out_path.stem + "-transcript.json")
             transcript_path.parent.mkdir(parents=True, exist_ok=True)
             transcript_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -649,24 +923,30 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     result = compare(script_tokens, heard, times)
-    if all(p.get("start") is None for p in pieces):
-        timestamps = "none"
-    elif all(p.get("word_level") for p in pieces):
-        timestamps = "word"
-    else:
-        timestamps = "segment"
+    timestamps = timing_kind(pieces)
+    rows, pace_issues = check_paragraphs(paragraphs, paragraph_tokens, heard, times, result["issues"],
+                                         timestamps == "word", args.wpm_band, args.wpm_fail_band)
+    issues = sorted(result["issues"] + pace_issues,
+                    key=lambda i: (i.get("paragraph", 0), 0 if i["kind"] == "pace" else 1, i["script_word"]))
+    verdict = FAIL if any(i["status"] == FAIL for i in issues) else PASS
     report.update({
         "language": args.language,
         "timestamps": timestamps,
         "measured_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "verdict": result["verdict"],
+        "verdict": verdict,
         "word_accuracy": result["word_accuracy"],
         "script_words": result["script_words"],
         "heard_words": result["heard_words"],
         "matched_words": result["matched_words"],
-        "counts": {FAIL: sum(1 for i in result["issues"] if i["status"] == FAIL),
-                   WARN: sum(1 for i in result["issues"] if i["status"] == WARN)},
-        "issues": result["issues"],
+        "counts": {FAIL: sum(1 for i in issues if i["status"] == FAIL),
+                   WARN: sum(1 for i in issues if i["status"] == WARN)},
+        "issues": issues,
+        "pace": {"measured": timestamps == "word", "unit": "words per minute over the speech span",
+                 "warn_band": list(args.wpm_band) if args.wpm_band else None,
+                 "fail_band": list(args.wpm_fail_band) if args.wpm_fail_band else None,
+                 "min_words": WPM_MIN_WORDS},
+        "paragraphs": rows,
+        "failing_paragraphs": [r["paragraph"] for r in rows if r["status"] == FAIL],
     })
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -679,7 +959,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         print("\n".join(human_lines(report, _display_path(out_path, base))))
-    return 1 if result["verdict"] == FAIL else 0
+    return 1 if verdict == FAIL else 0
 
 
 if __name__ == "__main__":

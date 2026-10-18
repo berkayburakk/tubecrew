@@ -45,13 +45,21 @@ change the creator's machine or agent setup):
 | HyperFrames (other agents) | `npx skills add heygen-com/hyperframes` |
 | yt-dlp, faster-whisper | `pip install yt-dlp faster-whisper` |
 | YouTube API libraries | `pip install google-auth google-auth-oauthlib requests` |
+| OCR for the text-dose check (optional) | `pip install rapidocr-onnxruntime` |
 
 Remotion and HyperFrames are installed by default when the creator agrees, because the `Make` station relies on
 code-based motion design. Paid tools (ElevenLabs, Codex) are only suggested, never signed up for. Wan and CosyVoice
 need a GPU and a manual install; point to their guides in `references/tools.md`. A plugin installed now is
 available after the agent restarts.
 
-## 4. Save
+## 4. Offer the publish guard
+
+If the creator lets the agent run uploads, offer the opt-in publish guard: a Claude Code hook that asks the
+creator before any upload or publish command and refuses it when nobody is there to answer. Install it only on a
+yes, with `python $SKILL/scripts/publish_guard.py --install-copy`, and follow `$SKILL/references/publish-guard.md`
+to add the printed block to the creator's settings.
+
+## 5. Save
 
 Record the creator's decisions, so every later station uses the same tools:
 
@@ -66,5 +74,5 @@ The file is `~/.tubecrew/stack.json`; `--show` prints it.
 
 ## Report back
 
-The stack as a short table (station, tool, cost), what was installed in this run, and the one next step, usually
-"start a video with produce-video".
+The stack as a short table (station, tool, cost), what was installed in this run (and whether the publish guard
+is on), and the one next step, usually "start a video with produce-video".
