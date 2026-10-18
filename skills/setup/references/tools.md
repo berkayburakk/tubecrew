@@ -60,8 +60,10 @@ stretching speech.
 | Your video editor | Your editor's license | Final assembly by hand; the render gate still applies |
 
 Pick one engine per project. Prefer Remotion if the creator reads React, HyperFrames if they read HTML. Both export
-an MP4 that `check-render` measures. With [RapidOCR](https://github.com/RapidAI/RapidOCR) installed
-(`pip install rapidocr-onnxruntime`, Apache-2.0), `text_dose.py` also measures how much of the runtime is text cards.
+an MP4 that `check-render` measures (`shorts_check.py` for Shorts; `shorts_cut.py --burn` needs an FFmpeg built
+with libass). With [RapidOCR](https://github.com/RapidAI/RapidOCR) installed
+(`pip install rapidocr-onnxruntime`, Apache-2.0), `text_dose.py` also measures how much of the runtime is text cards, and `shorts_check.py --ocr` checks that text
+stays out of the Shorts UI.
 
 ## Generated clips (`clips`)
 

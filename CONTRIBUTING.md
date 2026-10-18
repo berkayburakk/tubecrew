@@ -45,6 +45,7 @@ Every skill and agent assumes one folder per video. Gates that other gates depen
     candidates/<n>/<take>.<ext>        takes for pick_takes.py
   dub/<lang>/          translated script, voice, captions      (localize)
   render/<name>.mp4    the final render
+  shorts/<name>.mp4    a Short cut from it, with its captions   (make-shorts; each Short uploads from its own folder)
   upload.json          title, description, tags, flags         (upload-private)
   preflight.md         lessons that apply to this video        (produce-video)
   costs.md             credits and fees spent on this video    (produce-video)
@@ -61,6 +62,8 @@ Every skill and agent assumes one folder per video. Gates that other gates depen
     FACT-CHECK-codex-<YYYY-MM-DD>.md   optional Codex cross-check (setup's tools.md)
     transitions.json                   transitions.py (review aid, not a gate)
     thumbnail-check.json               thumb_check.py (+ thumbnail-preview.png)
+    shorts-candidates.json             shorts_pick.py
+    shorts-check-<name>.json           shorts_check.py: verdict + sha256 of the Short
     UPLOAD-GATE-<YYYY-MM-DD>.md        upload-checker
     upload-log.json                    upload.py, after a real upload
 ```

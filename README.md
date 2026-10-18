@@ -5,9 +5,9 @@
 ### Your end-to-end YouTube crew, inside Claude Code and Codex.
 
 **From idea to private upload in one conversation: topic, research, script, voice, render, thumbnail, dubbing,
-upload and analytics.**
+Shorts, upload and analytics.**
 
-**13 skills · 6 AI reviewers · quality gates written in code**
+**14 skills · 6 AI reviewers · quality gates written in code**
 
 [![tests](https://img.shields.io/github/actions/workflow/status/berkayburakk/tubecrew/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/berkayburakk/tubecrew/actions/workflows/test.yml)
 [![release](https://img.shields.io/github/v/release/berkayburakk/tubecrew?style=flat-square&color=294f82)](https://github.com/berkayburakk/tubecrew/releases)
@@ -40,6 +40,7 @@ upload and analytics.**
 | 🎞️ | **Gate the render** | Loudness, a hook that really moves, black and frozen frames, subtitles synced to the spoken words |
 | 🖼️ | **Pick the thumbnail** | Every candidate judged at the size viewers see it in the feed |
 | 🌍 | **Dub it** | Meaning-first translation that keeps every number, timed to the same pictures |
+| ✂️ | **Cut Shorts** | 3-5 cuts that work for a stranger, reframed vertical and gated before a private upload |
 | 🔒 | **Upload privately** | Reviews bound to the exact file, login health, an optional schedule; you press publish |
 | 📈 | **Learn** | Where viewers left, scene by scene, and a channel pulse that ends in one diagnosis |
 
@@ -172,8 +173,8 @@ the topic, the first 60 to 90 seconds, and publishing.
   ends with one diagnosis, such as "YouTube tested your video and cut it: fix the packaging, not the topic".
 - **Lessons become checks.** A decisions ledger with T+30 and T+90 rows, numbered lessons, and a gate counter
   that shows which checks still catch anything.
-- **Light on context.** No session hooks and nothing injected at startup. All thirteen skills and six agents add
-  about 2.6k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
+- **Light on context.** No session hooks and nothing injected at startup. All fourteen skills and six agents add
+  about 2.8k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
 
 <a id="whats-inside"></a>
 ## 📦 What's inside
@@ -190,6 +191,7 @@ the topic, the first 60 to 90 seconds, and publishing.
 | `check-voiceover` | Compares what the voiceover said with the script, paragraph by paragraph; picks the best take and trims long pauses | `voice_check.py`, `pick_takes.py`, `trim_silence.py` |
 | `check-render` | Loudness, silences, black and frozen frames, a hook that really moves, subtitles against the spoken words; the final mix, the text dose and overlay pops | `render_check.py`, `normalize_audio.py`, `text_dose.py`, `transitions.py` |
 | `check-thumbnail` | Format, size, dark area, clutter, text rules and title repetition, with a feed-size preview of every candidate | `thumb_check.py` |
+| `make-shorts` | Picks self-contained Short cuts from the script and word timings (re-ranked by retention), reframes to 1080x1920 with re-timed captions, gates aspect, length, opening, loop and UI safe zones | `shorts_pick.py`, `shorts_cut.py`, `shorts_check.py` |
 | `localize` | Meaning-first translation that keeps every number, a native-listener audit, and a timing check for each dubbed paragraph | `dub_fit.py` |
 | `upload-private` | Metadata limits, chapter rules, translations, hash-bound verdicts, token health and a resumable, private-only upload | `upload.py` |
 | `retention-by-scene` | Opening loss, cliffs, slide and rewatch bumps, mapped to chapters or script sections | `retention.py` |

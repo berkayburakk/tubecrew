@@ -44,6 +44,9 @@ run `setup` first.
 | 11 | Publish | the creator, in YouTube Studio | a human pressed publish or chose the schedule |
 | 12 | Learn | `channel-pulse` weekly, `retention-by-scene` after 72 h | one lesson in `lessons.md`; due `decisions.md` rows filled from tool output |
 
+**Shorts:** once the long video passed station 10, `make-shorts` turns it into Shorts with the same gates; each
+Short goes public only after its long video.
+
 Station 5 exists because the most expensive mistake is a whole video built on an opening nobody liked. Render
 or mock the first 60-90 seconds and ask before you build the rest.
 
