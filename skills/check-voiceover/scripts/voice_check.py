@@ -159,7 +159,7 @@ _UNITS = {w: i for i, w in enumerate(
     "seventeen eighteen nineteen".split())}
 _TENS = {w: (i + 2) * 10 for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
 _DIGIT_WORDS = {w: str(i) for w, i in _UNITS.items() if i < 10}
-_PERCENT_WORDS = {"percent": "%", "yüzde": "%"}
+_PERCENT_WORDS = {"percent": "%"}
 # Recognizers write "12.5 billion dollars" as "$12.5 billion"; both sides are folded to "$ 12.5 billion".
 _CURRENCY_WORDS = {"dollar": "$", "dollars": "$", "euro": "€", "euros": "€", "pounds": "£",
                    "yen": "¥"}

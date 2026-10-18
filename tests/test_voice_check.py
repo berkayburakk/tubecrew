@@ -80,8 +80,8 @@ def test_numbers_normalize_consistently():
     assert vc.normalize("twelve point five percent") == ["12.5", "%"]
     assert vc.normalize("one hundred and twenty five") == ["125"]
     assert vc.normalize("two thousand twenty four") == ["2024"]
-    assert vc.normalize("12,5 milyar", "tr") == ["12.5", "milyar"]
-    assert vc.normalize("1.000 kişi", "tr") == ["1000", "kişi"]
+    assert vc.normalize("12,5 Milliarden", "de") == ["12.5", "milliarden"]
+    assert vc.normalize("1.000 Menschen", "de") == ["1000", "menschen"]
     assert check("It grew twelve percent.", "It grew 12%.")["issues"] == []
     assert vc.normalize("12.5 billion dollars") == vc.normalize("$12.5 billion") == ["$", "12.5", "billion"]
     assert vc.normalize("twelve dollars") == ["$", "12"]
@@ -167,13 +167,19 @@ def test_whisper_json_shapes():
     assert vc.heard_tokens(vc.parse_json_transcript(words))[0] == ["hi", "there"]
 
 
-def test_turkish_sample_keeps_letters():
-    text = "Şirketin geliri %12 arttı; İstanbul'da ılık ve güzel bir gün. IŞIK çok önemli."
-    tokens = vc.normalize(text, "tr")
-    assert tokens[:5] == ["şirketin", "geliri", "%", "12", "arttı"]
-    assert "istanbulda" in tokens and "ılık" in tokens and "güzel" in tokens and "ışık" in tokens
-    result = check(text, text.replace("güzel", "guzel"), "tr")
+def test_non_ascii_letters_survive():
+    text = "Le chiffre d'affaires a augmenté; une journée tiède à Zürich."
+    tokens = vc.normalize(text, "fr")
+    assert tokens[:3] == ["le", "chiffre", "daffaires"]
+    assert "augmenté" in tokens and "tiède" in tokens and "zürich" in tokens
+    result = check(text, text.replace("tiède", "tiede"), "fr")
     assert reasons(result) == ["mismatch"]
+
+
+def test_dotted_and_dotless_i_casefold_for_turkic_language_codes():
+    dotted_capital, dotless_small = chr(0x130), chr(0x131)
+    assert vc.normalize("I " + dotted_capital, "az") == [dotless_small, "i"]
+    assert vc.normalize("I " + dotted_capital, "en") == ["i", "i"]
 
 
 # ------------------------------------------------------------------------------------------- command line

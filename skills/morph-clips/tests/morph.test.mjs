@@ -41,11 +41,11 @@ test('path equals its keys at the ends', () => {
 
 test('words: SRT and JSON', () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'morph-test-'));
-  fs.writeFileSync(path.join(d, 'a.srt'), '1\n00:00:01,000 --> 00:00:02,000\nskill yüklenir\n');
-  fs.writeFileSync(path.join(d, 'a.json'), JSON.stringify([{word: 'skill', start: 1.2, end: 1.5}, {word: 'yüklenir', start: 1.6, end: 2}]));
+  fs.writeFileSync(path.join(d, 'a.srt'), '1\n00:00:01,000 --> 00:00:02,000\nskill geöffnet\n');
+  fs.writeFileSync(path.join(d, 'a.json'), JSON.stringify([{word: 'skill', start: 1.2, end: 1.5}, {word: 'geöffnet', start: 1.6, end: 2}]));
   const runWords = f => spawnSync(process.execPath, [path.join(HERE, '..', 'cli', 'morph.mjs'), 'words', path.join(d, f)], {encoding: 'utf8'}).stdout.trim();
-  assert.equal(runWords('a.srt'), '1.00:skill 1.40:yüklenir');
-  assert.equal(runWords('a.json'), '1.20:skill 1.60:yüklenir');
+  assert.equal(runWords('a.srt'), '1.00:skill 1.40:geöffnet');
+  assert.equal(runWords('a.json'), '1.20:skill 1.60:geöffnet');
 });
 
 test('colorTrack reaches its target colour', () => {

@@ -1,95 +1,131 @@
+<div align="center">
+
 # tubecrew
 
-**A YouTube production crew for your coding agent.** tubecrew turns Claude Code (or Codex) into a production
-line for videos: topics chosen from evidence, every number sourced, scripts that sound like a person, voiceover
-and render checked in code, independent reviewers, private uploads, and a retention post-mortem that names the
-scene where viewers left.
+### A YouTube production crew for your coding agent.
 
-*Türkçe: [README.tr.md](README.tr.md)*
+**Topics chosen from evidence. Every number sourced. Quality gates in code. Uploads stay private until you publish.**
 
-## How it works
+[![tests](https://img.shields.io/github/actions/workflow/status/berkayburakk/tubecrew/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/berkayburakk/tubecrew/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/berkayburakk/tubecrew?style=flat-square&color=294f82)](https://github.com/berkayburakk/tubecrew/releases)
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-d97757?style=flat-square)](#install)
+[![Codex skills](https://img.shields.io/badge/Codex-skills-10a37f?style=flat-square)](#codex)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#requirements)
+[![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-A video moves through stations. Each station writes a file, and the next one starts only after a gate passes.
+[Quick start](#quick-start) · [How it works](#how-it-works) · [What's inside](#whats-inside) · [Safety](#what-tubecrew-will-never-do) · [FAQ](#faq) · [Contributing](#contributing)
 
-```
-topic ──> research ──> script ──> numbers ──> first 60-90 s ──> voice ──> edit ──> render ──> package ──> upload ──> learn
-  │          │           │          │              │              │                  │                     │          │
-skeptic  facts_check  lint +    facts_check +    creator OK    voice_check      render_check +       upload-checker  retention
- agent                A/B agent  fact-checker                                    render-auditor       + upload.py    by scene
-```
+<code>/plugin marketplace add berkayburakk/tubecrew</code>
 
-Three kinds of work, kept apart on purpose:
+</div>
 
-- **Thinking** (which topic, what story, what looks good) stays with the model and the creator.
-- **Repetition** (counting words, measuring loudness, matching numbers to sources, checking metadata limits) is done
-  by small scripts with exit codes. A script that exits 1 means "fix the work", not "argue with the check".
-- **Reviewing** is done by an agent that did not make the thing: a fact-checker, a script auditor, a render
-  auditor, an upload checker.
+> [!NOTE]
+> tubecrew never publishes on its own. Uploads are always private, and publishing, scheduling and anything
+> irreversible remain a human decision in YouTube Studio.
 
-## What makes it different
+---
 
-- **Gates, not paragraphs.** When a mistake repeats, it becomes a check in a script instead of a longer
-  instruction. Skills stay short; the agent is not asked to remember 40 rules.
-- **Verdicts bind to bytes.** A render review is valid only for the exact file it judged (SHA-256). Re-render the
-  video and the upload script refuses the old approval.
-- **Every number has a source.** The script may only contain numbers that exist in `facts.json` with a link; a
-  script gate finds the ones that do not.
-- **Nothing publishes itself.** Uploads are private, always. Publishing and scheduling are a human click in
-  YouTube Studio. Your own OAuth client, stored outside the project; no shared keys.
-- **Measures after publishing.** Retention comes straight from the YouTube Analytics API and is laid over your
-  chapters or script, so "people left at 2:14" becomes "people left during the setup paragraph".
-- **Light on context.** No session hooks and nothing injected at startup. All nine skills and six agents add
-  about 1.8k tokens to a session (`claude plugin details tubecrew`); a skill's body loads only when it is used,
-  and most are under 1.5k tokens.
+tubecrew turns Claude Code or Codex into a production line for YouTube videos. It finds topics in what is already
+outperforming in your niche, keeps every figure tied to a primary source, writes scripts meant to be spoken, checks
+the voiceover and the render in code, has independent agents review the work, uploads privately, and tells you
+which scene viewers left on.
 
-## Installation
+Thinking stays with you and the model: which topic, what story, what looks right. Repetitive work goes to small
+scripts with exit codes: counting words, measuring loudness, matching numbers to sources, checking metadata
+limits. Reviews go to agents that did not make the thing they review.
 
-### Claude Code
+## Quick start
 
-```
+### Install
+
+**Claude Code**
+
+```text
 /plugin marketplace add berkayburakk/tubecrew
 /plugin install tubecrew@tubecrew
 ```
 
-Skills appear as `tubecrew:<skill>` and agents as `tubecrew:<agent>`. Update later with
-`/plugin update tubecrew`.
+Skills appear as `tubecrew:<skill>` and agents as `tubecrew:<agent>`. Update with `/plugin update tubecrew`.
 
-### Codex
-
-Copy the skills and the agents into your Codex folders:
+<a id="codex"></a>
+**Codex**
 
 ```bash
 git clone https://github.com/berkayburakk/tubecrew.git
-cp -r tubecrew/skills/* ~/.codex/skills/          # or your repo's .agents/skills/
+cp -r tubecrew/skills/* ~/.codex/skills/          # or your repository's .agents/skills/
 cp tubecrew/codex/agents/*.toml ~/.codex/agents/
 ```
 
 A Codex plugin manifest (`.codex-plugin/plugin.json`) is included for plugin-aware Codex builds.
 
-### Any other agent
+**Other agents**
 
-Every skill is a folder with a `SKILL.md` and its scripts. Copy the folders your agent can read, or paste a
-`SKILL.md` into a chat; you lose the scripts, which are most of the point.
+Each skill is a folder with a `SKILL.md` and its scripts. Copy the folders into any agent that reads skills.
 
 ### Requirements
 
 | For | You need |
 |---|---|
-| All scripts | Python 3.9+ (`python` on Windows, `python3` on macOS/Linux) |
-| Render and voice checks | `ffmpeg` and `ffprobe` on PATH |
+| All scripts | Python 3.9+ (`python` on Windows, `python3` on macOS and Linux) |
+| Voiceover and render checks | `ffmpeg` and `ffprobe` on `PATH` |
 | Topic research | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) |
 | Upload and retention | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
-| Transcribing audio | `pip install faster-whisper` (optional; any SRT/VTT/Whisper JSON transcript also works) |
-| Motion graphics | Node 18+ (`morph-clips` installs its own Playwright) |
+| Transcribing audio | `pip install faster-whisper` (optional; any SRT, VTT or Whisper JSON transcript also works) |
+| Motion graphics | Node.js 18+ (`morph-clips` installs its own Playwright) |
 
-## Quick start
+### Ask your agent
 
-Open your agent in an empty folder and try:
+```text
+Find my next video topic. My niche is space exploration explainers, and these are
+five channels I compete with: ...
+```
 
-- "Find my next video topic. My niche is space exploration explainers; here are five channels I compete with: ..."
-- "Start a new video project about how a space telescope unfolds."
-- "Check this render before I upload it: render/final.mp4"
-- "Why did people stop watching my video `<video id>`?"
+```text
+Start a new video project about how a space telescope unfolds.
+```
+
+```text
+Check this render before I upload it: render/final.mp4
+```
+
+```text
+Why did viewers stop watching my video <video id>?
+```
+
+### Run the gates yourself
+
+Every gate is a plain script you can run from a terminal or CI:
+
+```bash
+python skills/find-topic/scripts/outliers.py @channel-one @channel-two --min-multiple 2
+python skills/research-facts/scripts/facts_check.py facts.json --script script.md
+python skills/check-render/scripts/render_check.py render/final.mp4 --srt captions.srt
+python skills/upload-private/scripts/upload.py my-video/            # dry run, uploads nothing
+```
+
+Exit code `0` means pass, `1` means the work needs fixing, `2` means a usage or environment problem.
+
+## How it works
+
+Each station writes a file, and the next station starts only after its gate passes. You decide at three points:
+the topic, the first 60 to 90 seconds, and publishing.
+
+![The tubecrew production line: plan, write, make, ship and learn, each with a gate. The creator picks the topic, approves the first 60 to 90 seconds and presses publish. Gate scripts measure in code, and independent review agents never review their own work.](docs/assets/production-line.svg)
+
+[Open the full-size figure](docs/assets/production-line.svg).
+
+- **Gates, not paragraphs.** When a mistake repeats, it becomes a check in a script instead of a longer
+  instruction. Skills stay short, so the agent spends its attention on judgement.
+- **Verdicts bind to bytes.** A review is valid only for the exact file it judged (SHA-256). Re-render the video
+  and the upload script rejects the old approval.
+- **Every number has a source.** A script may contain only figures that exist in `facts.json` with a link; the
+  script gate flags the rest.
+- **The maker never reviews.** Fact-checking, script review, render review and the upload decision go to agents
+  that did not produce the work. Drafts and experiments skip review; anything that ships does not.
+- **Measured after publishing.** Retention comes straight from the YouTube Analytics API and is mapped onto your
+  chapters or script, so "viewers left at 2:14" becomes "viewers left during the setup paragraph".
+- **Light on context.** No session hooks and nothing injected at startup. All nine skills and six agents add
+  about 1.8k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
 
 ## What's inside
 
@@ -98,65 +134,101 @@ Open your agent in an empty folder and try:
 | Skill | What it does | Script |
 |---|---|---|
 | `produce-video` | Keeps the order and the gates from idea to private upload | - |
-| `find-topic` | Competitor outliers vs each channel's own median, search intent, reachable step | `outliers.py` |
-| `research-facts` | One `facts.json` with every number's source, type and date; gates the script | `facts_check.py` |
-| `write-script` | Opening built for the first 30 s, humanizing pass against 26 AI-writing patterns | `script_lint.py` |
-| `check-voiceover` | Compares what the voice actually said with the script | `voice_check.py` |
-| `check-render` | Loudness, silent tail, black frames, frozen hook, subtitle timing | `render_check.py` |
-| `upload-private` | Metadata limits, chapter rules, hash-bound verdicts, private resumable upload | `upload.py` |
-| `retention-by-scene` | Opening, cliffs, slide and rewatch bumps per chapter or script section | `retention.py` |
+| `find-topic` | Ranks competitor videos by how far they beat their own channel's median; checks search intent and a reachable step for small channels | `outliers.py` |
+| `research-facts` | One `facts.json` with every figure's source, type and date; gates the script against it | `facts_check.py` |
+| `write-script` | An opening built for the first 30 seconds, a humanizing pass against 26 AI-writing patterns, a mechanical lint | `script_lint.py` |
+| `check-voiceover` | Compares what the voiceover actually said with the script: skipped phrases, wrong numbers, repeats | `voice_check.py` |
+| `check-render` | Loudness, silent tails, black frames, a frozen hook and subtitle timing in one pass | `render_check.py` |
+| `upload-private` | Metadata limits, chapter rules, hash-bound verdicts and a resumable, private-only upload | `upload.py` |
+| `retention-by-scene` | Opening loss, cliffs, slide and rewatch bumps, mapped to chapters or script sections | `retention.py` |
 | `morph-clips` | Motion-graphic B-roll timed to your words: one shape that morphs and never cuts | `morph.mjs` |
 
 ### Review agents
 
 | Agent | Reviews | Returns |
 |---|---|---|
-| `topic-skeptic` | Topic candidates and their evidence | ALIVE / DEAD per candidate |
-| `fact-checker` | Every number and claim against primary sources | PASS / FAIL table |
-| `script-auditor` | Original vs humanized script, paragraph by paragraph | A / B / fix + must-fix list |
-| `render-auditor` | The final render, frame by frame | PASS / FAIL with timestamps |
-| `upload-checker` | Title, description, chapters, links, disclosure, channel | GO / NO-GO file |
-| `privacy-scanner` | Anything about to leave your machine | CLEAN / LEAK |
+| `topic-skeptic` | Topic candidates and their evidence | ALIVE or DEAD for each candidate |
+| `fact-checker` | Every number and claim, against primary sources | PASS or FAIL, with a table of claims |
+| `script-auditor` | The original and the humanized script, paragraph by paragraph | A, B or a fix, plus a must-fix list |
+| `render-auditor` | The final render, frame by frame | PASS or FAIL, with timestamps |
+| `upload-checker` | Title, description, chapters, links, disclosure and target channel | A GO or NO-GO file |
+| `privacy-scanner` | Anything about to leave your machine | CLEAN or LEAK |
 
-The maker never reviews its own work. Reviews are for what ships; drafts and experiments skip them.
+### The project folder
 
-## The project folder
+One folder per video. Every gate writes its result into `qa/`:
 
-One folder per video; every gate writes into `qa/`:
-
-```
+```text
 my-video/
-  facts.json  script.md  upload.json
-  voice/  render/  qa/
+├── facts.json      every figure with its source
+├── script.md       the spoken script
+├── upload.json     title, description, tags, disclosure flags
+├── voice/          narration audio and its transcript
+├── render/         the final render
+└── qa/             gate results and review verdicts
 ```
 
-The exact file contract (verdict lines, hashes, where credentials live) is in [CONTRIBUTING.md](CONTRIBUTING.md).
+The full contract (verdict lines, hashes and where credentials live) is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## What it will never do
+## What tubecrew will never do
 
 - Make a video public, schedule it, or delete anything.
-- Upload without the render check, the render review and the upload review approving the exact same file.
-- Store tokens or keys in your project, or use anyone's credentials but yours.
-- Watch, like or comment on your own videos. Automated engagement breaks YouTube's rules and can cost the
-  monetization account behind all of your channels.
+- Upload unless the render check, the render review and the upload review all approve the exact same file.
+- Store tokens or keys in your project, or use any credentials other than your own.
+- Watch, like or comment on your own videos. Automated engagement violates YouTube's policies and can put the
+  monetization account behind all of your channels at risk.
 - Invent a number, a quote or a result.
 
-## Philosophy
+## FAQ
 
-The rules here came from shipping real videos and writing down every mistake. Most of them were caught the
-second time by a script, not by a better prompt. If you add to tubecrew, keep that direction: when something
-goes wrong twice, write the check.
+<details>
+<summary><strong>Does tubecrew upload or publish videos for me?</strong></summary>
+
+It uploads only when you run the upload script with `--upload`, and always as private. Publishing, scheduling and
+visibility changes happen in YouTube Studio, by you.
+</details>
+
+<details>
+<summary><strong>Do I need an API key or a paid service?</strong></summary>
+
+No. Topic research, script, voiceover and render checks run locally with free tools. Upload and retention use your
+own Google Cloud OAuth client, which is free to create. Voice generation is up to you: any text-to-speech service,
+or your own recording.
+</details>
+
+<details>
+<summary><strong>Does it work for languages other than English?</strong></summary>
+
+Mostly, yes. The render and upload gates do not depend on language, and the voiceover check works with any
+language faster-whisper supports, including number formats that use a decimal comma. The script lint's
+AI-vocabulary lists and the fact check's number parsing assume English; the lint's other measurements (sentence
+length, runtime, phrase timing) work in any language.
+</details>
+
+<details>
+<summary><strong>Is it only for faceless channels?</strong></summary>
+
+No. Talking-head and screen-recording channels use the same research, script, render and upload gates.
+`check-voiceover` compares a recorded take with the script just as it does with synthetic speech, and `morph-clips`
+adds motion graphics to recorded footage.
+</details>
+
+<details>
+<summary><strong>Why scripts instead of longer instructions?</strong></summary>
+
+Long instruction files get skimmed, and the middle gets lost. A check with an exit code cannot be skimmed. Keeping
+skills short and moving the mechanical work into scripts leaves the agent's attention for decisions that need
+judgement.
+</details>
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; run `python -m pytest` and
-`claude plugin validate . --strict` before opening a PR.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, then run `python -m pytest`
+and `claude plugin validate . --strict` before opening a pull request.
 
-## Starter kit
-
-New to all of this? [`examples/starter-kit`](examples/starter-kit) is the one-skill version (English and
-Turkish) you can copy into a project in a minute.
+New to agent skills? [`examples/starter-kit`](examples/starter-kit) is a single-skill version you can copy into a
+project in a minute.
 
 ## License
 
-MIT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for third-party credits.
+MIT. See [LICENSE](LICENSE), and [NOTICE.md](NOTICE.md) for third-party credits.

@@ -159,15 +159,17 @@ def test_usage_errors(tmp_path):
     assert sl.main([str(path), "--wpm", "0"]) == 2
 
 
-def test_turkish_text_does_not_crash(tmp_path, capsys):
-    text = ("# Başlık\n\n**P01** İstanbul'da bir şirket 2025'te büyüdü. Şirket 6. bölümde anlatılan yöntemi "
-            "kullandı. Şirket çok kazandı!\n\nP02 Peki bu nasıl oldu? Cevap basit. Çok basit. Gerçekten.")
-    r = sl.lint(text, phrase="peki bu nasıl oldu")
-    assert r["sentences"] == 7  # "6. bölümde" is an ordinal, not a sentence end
+def test_non_english_text_does_not_crash(tmp_path, capsys):
+    # Norwegian: non-ASCII letters, and an ordinal ("6. kapittel") followed by a lowercase word
+    text = ("# Overskrift\n\n**P01** Et selskap i Tromsø vokste i 2025. Selskapet brukte metoden som er beskrevet "
+            "i 6. kapittel. Selskapet tjente mye!\n\nP02 Hvordan skjedde dette? Svaret er enkelt. Veldig enkelt. "
+            "Virkelig.")
+    r = sl.lint(text, phrase="hvordan skjedde dette")
+    assert r["sentences"] == 7  # "6. kapittel" is an ordinal, not a sentence end
     assert r["ai_vocabulary"] == [] and r["setup_phrases"] == []
-    assert [(x["opener"], x["count"]) for x in r["repeated_openings"]] == [("şirket", 2)]
+    assert [(x["opener"], x["count"]) for x in r["repeated_openings"]] == [("selskapet", 2)]
     assert r["phrase"]["found"] and r["phrase"]["within_limit"]
     assert len(r["fragment_runs"]) == 1
     path = _write(tmp_path, text)
-    assert sl.main([str(path), "--gate", "--phrase", "peki bu nasıl oldu"]) == 0
-    assert "Şirket" in capsys.readouterr().out
+    assert sl.main([str(path), "--gate", "--phrase", "hvordan skjedde dette"]) == 0
+    assert "Tromsø" in capsys.readouterr().out

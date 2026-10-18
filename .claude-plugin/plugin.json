@@ -1,7 +1,7 @@
 {
   "name": "tubecrew",
   "description": "A YouTube production crew for Claude Code: find topics from evidence, source every number, write scripts that sound human, gate voiceover and render in code, review with independent agents, upload privately, then learn from retention by scene.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "berkayburakk",
     "url": "https://github.com/berkayburakk"

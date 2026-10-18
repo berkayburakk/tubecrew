@@ -9,7 +9,7 @@
     {
       "name": "tubecrew",
       "description": "A YouTube production crew for Claude Code: evidence-based topics, sourced facts, human-sounding scripts, code gates for voiceover and render, independent reviewers, private uploads and retention by scene.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./",
       "author": {
         "name": "berkayburakk",

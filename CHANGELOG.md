@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-10-18
+
+- English-only repository: translated copies of the README and the starter kit were removed, and test samples
+  now use other languages.
+- New README layout with a production-line figure that follows the light and dark theme.
+
 ## 0.1.0 - 2026-10-18
 
 First public release.
@@ -10,4 +16,4 @@ First public release.
   `upload.py` (dry run by default, private-only uploads), `retention.py`.
 - Review agents: `fact-checker`, `topic-skeptic`, `script-auditor`, `render-auditor`, `upload-checker`,
   `privacy-scanner`, with Codex copies in `codex/agents/`.
-- `examples/starter-kit`: the minimal one-skill version in English and Turkish.
+- `examples/starter-kit`: the minimal one-skill version.

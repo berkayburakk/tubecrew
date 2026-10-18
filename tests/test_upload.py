@@ -157,7 +157,7 @@ def test_title_validator():
 def test_description_validator_counts_utf8_bytes():
     assert up.validate_description("a" * 5000)[0] == []
     assert up.validate_description("a" * 5001)[0]
-    assert up.validate_description("ü" * 2501)[0]  # 2501 characters, 5002 bytes
+    assert up.validate_description("é" * 2501)[0]  # 2501 characters, 5002 bytes
     assert up.validate_description("use x > y")[0]
     assert up.validate_description("")[1]  # empty is a warning, not a failure
 

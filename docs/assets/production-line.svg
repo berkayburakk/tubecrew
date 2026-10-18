@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="810" viewBox="0 0 1640 810" role="img" aria-labelledby="title desc">
+  <title id="title">The tubecrew production line</title>
+  <desc id="desc">Five stations: plan, write, make, ship and learn. Each station writes a file and has a gate: skeptic and fact checks, script lint and fact-checker, voice and render checks, an upload go decision, and a lesson that becomes a new check. The creator picks the topic, approves the first 60 to 90 seconds and presses publish. Gate scripts measure in code; independent review agents never review their own work.</desc>
+  <defs>
+    <marker id="flow" markerWidth="14" markerHeight="14" refX="10" refY="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 L10 7 L2 12" fill="none" stroke="#294f82" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="loop" markerWidth="14" markerHeight="14" refX="10" refY="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 L10 7 L2 12" fill="none" stroke="#5b6570" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+<style>
+@media (prefers-color-scheme: dark){
+svg{background-color:#0d1117}
+[fill="#ffffff"]{fill:#0d1117}
+[fill="#f6f8fa"]{fill:#161b22}
+[fill="#20252b"]{fill:#e6edf3}
+[fill="#5b6570"]{fill:#9ba7b4}
+[stroke="#5b6570"]{stroke:#9ba7b4}
+[stroke="#87929e"]{stroke:#6e7681}
+[stroke="#d7dce1"]{stroke:#30363d}
+[fill="#294f82"]{fill:#79c0ff}
+[stroke="#294f82"]{stroke:#79c0ff}
+[fill="#9a5b00"]{fill:#e3b341}
+[stroke="#9a5b00"]{stroke:#e3b341}
+}
+</style>
+  <rect width="1640" height="810" fill="#ffffff"/>
+  <g font-family="Inter, 'Segoe UI', Arial, Helvetica, sans-serif" fill="#20252b">
+    <text x="40" y="80" font-size="52" font-weight="700">The tubecrew production line</text>
+    <text x="40" y="124" font-size="26" fill="#5b6570">Each station writes a file. The next one starts only when its gate passes.</text>
+
+    <!-- creator touchpoints -->
+    <g fill="none" stroke="#9a5b00" stroke-width="2.5">
+      <rect x="49" y="160" width="230" height="44" rx="22"/>
+      <rect x="645" y="160" width="350" height="44" rx="22"/>
+      <rect x="1038" y="160" width="220" height="44" rx="22"/>
+      <path d="M164 204 V238 M820 204 V238 M1148 204 V238" stroke-dasharray="5 6"/>
+    </g>
+    <g font-size="21" font-weight="600" fill="#9a5b00" text-anchor="middle">
+      <text x="164" y="189">You pick the topic</text>
+      <text x="820" y="189">You approve the first 60-90 s</text>
+      <text x="1148" y="189">You press publish</text>
+    </g>
+
+    <!-- stations -->
+    <g fill="#f6f8fa" stroke="#87929e" stroke-width="3">
+      <rect x="20" y="240" width="288" height="260" rx="16"/>
+      <rect x="348" y="240" width="288" height="260" rx="16"/>
+      <rect x="676" y="240" width="288" height="260" rx="16"/>
+      <rect x="1004" y="240" width="288" height="260" rx="16"/>
+      <rect x="1332" y="240" width="288" height="260" rx="16"/>
+    </g>
+    <g stroke="#d7dce1" stroke-width="2">
+      <path d="M44 424 H284 M372 424 H612 M700 424 H940 M1028 424 H1268 M1356 424 H1596"/>
+    </g>
+    <g text-anchor="middle">
+      <g font-size="40" font-weight="700">
+        <text x="164" y="302">1. Plan</text>
+        <text x="492" y="302">2. Write</text>
+        <text x="820" y="302">3. Make</text>
+        <text x="1148" y="302">4. Ship</text>
+        <text x="1476" y="302">5. Learn</text>
+      </g>
+      <g font-size="24" fill="#5b6570">
+        <text x="164" y="356">Topic from outliers</text>
+        <text x="164" y="390">Every number sourced</text>
+        <text x="492" y="356">A script for the ear</text>
+        <text x="492" y="390">Humanized, reviewed</text>
+        <text x="820" y="356">Voice, edit, render</text>
+        <text x="820" y="390">With your own tools</text>
+        <text x="1148" y="356">Package and upload</text>
+        <text x="1148" y="390">Always as private</text>
+        <text x="1476" y="356">Retention by scene</text>
+        <text x="1476" y="390">One lesson per video</text>
+      </g>
+      <g font-size="16" font-weight="700" fill="#294f82" letter-spacing="3">
+        <text x="164" y="456">GATE</text>
+        <text x="492" y="456">GATE</text>
+        <text x="820" y="456">GATE</text>
+        <text x="1148" y="456">GATE</text>
+        <text x="1476" y="456">GATE</text>
+      </g>
+      <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="20" fill="#294f82">
+        <text x="164" y="484">skeptic + facts_check</text>
+        <text x="492" y="484">lint + fact-checker</text>
+        <text x="820" y="484">voice + render checks</text>
+        <text x="1148" y="484">upload-checker GO</text>
+        <text x="1476" y="484">lesson becomes check</text>
+      </g>
+    </g>
+
+    <!-- flow -->
+    <g fill="none" stroke="#294f82" stroke-width="3.5" marker-end="url(#flow)">
+      <path d="M311 370 H343"/>
+      <path d="M639 370 H671"/>
+      <path d="M967 370 H999"/>
+      <path d="M1295 370 H1327"/>
+    </g>
+
+    <!-- feedback loop -->
+    <path d="M1476 503 V548 H164 V508" fill="none" stroke="#5b6570" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#loop)"/>
+    <text x="820" y="580" font-size="21" fill="#5b6570" text-anchor="middle">Every lesson feeds the next topic, and a mistake that repeats becomes a new check</text>
+
+    <!-- foundations -->
+    <g fill="#f6f8fa" stroke="#87929e" stroke-width="3">
+      <rect x="20" y="610" width="790" height="170" rx="16"/>
+      <rect x="850" y="610" width="770" height="170" rx="16"/>
+    </g>
+    <g font-size="30" font-weight="700">
+      <text x="48" y="654">Gate scripts</text>
+      <text x="878" y="654">Review agents</text>
+    </g>
+    <g font-size="22" fill="#5b6570">
+      <text x="48" y="690">Measure in code. Exit 1 means fix the work, not the check.</text>
+      <text x="878" y="690">Independent eyes. Never the agent that made the work.</text>
+    </g>
+    <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="19" fill="#294f82">
+      <text x="48" y="728">outliers · facts_check · script_lint · voice_check</text>
+      <text x="48" y="758">render_check · upload · retention</text>
+      <text x="878" y="728">topic-skeptic · fact-checker · script-auditor</text>
+      <text x="878" y="758">render-auditor · upload-checker · privacy-scanner</text>
+    </g>
+  </g>
+</svg>
