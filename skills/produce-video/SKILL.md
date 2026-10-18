@@ -21,6 +21,13 @@ One folder per video. Create it first:
 
 `qa/` holds every gate result. See CONTRIBUTING.md in the plugin root for the exact file contract.
 
+## The creator's tools
+
+Before the first video, run the `setup` skill once. It detects what the creator has (Remotion, HyperFrames, Wan,
+CosyVoice, Codex, a GPU), asks about subscriptions such as ElevenLabs, and saves the choices in
+`~/.tubecrew/stack.json`. At every station, use the tool chosen there instead of guessing. If the file is missing,
+run `setup` first.
+
 ## The line
 
 | # | Station | Skill / agent | Gate (do not move on until) |
@@ -28,10 +35,10 @@ One folder per video. Create it first:
 | 1 | Topic | `find-topic`, then the `topic-skeptic` agent | at least one candidate is ALIVE with evidence |
 | 2 | Research | `research-facts` | `facts_check.py facts.json` exits 0 |
 | 3 | Script | `write-script`, then the `script-auditor` agent | lint gate passes, A/B verdict merged |
-| 4 | Number check | `facts_check.py --script`, then the `fact-checker` agent | 0 unsourced numbers, fact-checker PASS |
+| 4 | Number check | `facts_check.py --script`, the `fact-checker` agent, and Codex when the stack's `verifier` is `codex` | 0 unsourced numbers, every checker PASS |
 | 5 | First slice | you + the creator | the creator approved the first 60-90 seconds |
-| 6 | Voiceover | your TTS or the creator's voice, then `check-voiceover` | `voice_check.py` exits 0 |
-| 7 | Visuals and edit | your editor or code (`morph-clips` for motion graphics) | text on screen follows the dose rule below |
+| 6 | Voiceover | the stack's `voice` (ElevenLabs, CosyVoice or a recording), then `check-voiceover` | `voice_check.py` exits 0 |
+| 7 | Visuals and edit | the stack's `motion` engine (Remotion, HyperFrames or `morph-clips`) and `clips` (Wan) | text on screen follows the dose rule below |
 | 8 | Render check | `check-render`, then the `render-auditor` agent | `render-check.json` PASS and `RENDER-AUDIT` PASS for the same file |
 | 9 | Package | title, thumbnail, description into `upload.json` | thumbnail text does not repeat the title |
 | 10 | Upload | the `upload-checker` agent, then `upload-private` | `UPLOAD-GATE` GO, uploaded as **private** |

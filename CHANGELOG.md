@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 - 2026-10-18
+
+- New `setup` skill and `detect_stack.py`: detect the creator's tools (Remotion, HyperFrames, Wan with ComfyUI,
+  CosyVoice, Codex CLI, FFmpeg, yt-dlp, faster-whisper, the GPU and its memory), ask about subscriptions,
+  suggest a tool for every station, install the free pieces with permission, and save the choices in
+  `~/.tubecrew/stack.json`. Secrets are never printed.
+- `produce-video` and `research-facts` use the saved stack; with `verifier: codex` the fact-check is repeated by
+  Codex, read-only, as a second model family.
+- New tool catalog (`skills/setup/references/tools.md`) with costs and licenses, and a "Works with your stack"
+  section in the README crediting the projects the line is built on.
+
 ## 0.1.2 - 2026-10-18
 
 Fixes from a full review; every bug fix has a regression test.

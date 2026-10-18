@@ -69,3 +69,7 @@ the gate. Exit 1 means fix the script, not the fact file.
 
 The `fact-checker` agent audits the final script against primary sources before any voiceover is made. Give it
 the script path and `facts.json`; the pack is a lead for it, not proof.
+
+When the creator's stack (`~/.tubecrew/stack.json`) has `verifier: codex`, also run the same audit through Codex,
+a different model family, with the read-only command in the setup skill's `references/tools.md`. A claim either
+checker marks WRONG gets fixed; a disagreement goes to the creator.

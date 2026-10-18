@@ -13,7 +13,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [What's inside](#whats-inside) · [Safety](#what-tubecrew-will-never-do) · [FAQ](#faq) · [Contributing](#contributing)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [What's inside](#whats-inside) · [Works with](#works-with-your-stack) · [Safety](#what-tubecrew-will-never-do) · [FAQ](#faq) · [Contributing](#contributing)
 
 <code>/plugin marketplace add berkayburakk/tubecrew</code>
 
@@ -69,6 +69,17 @@ Without plugins, copy the skills instead: `cp -r tubecrew/skills/* ~/.agents/ski
 
 Each skill is a folder with a `SKILL.md` and its scripts. Copy the folders into any agent that reads skills.
 
+### Set up your stack
+
+```text
+Set up tubecrew.
+```
+
+The `setup` skill checks what you already have (Remotion, HyperFrames, Wan, CosyVoice, Codex, FFmpeg, your GPU),
+asks about the subscriptions it cannot see (ElevenLabs, a ChatGPT plan for Codex), and suggests a tool for every
+station. With your permission it installs the free pieces, including the Remotion and HyperFrames agent skills,
+and saves your choices so every later video uses the same stack. See [Works with your stack](#works-with-your-stack).
+
 ### Requirements
 
 | For | You need |
@@ -78,7 +89,7 @@ Each skill is a folder with a `SKILL.md` and its scripts. Copy the folders into 
 | Topic research | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) |
 | Upload and retention | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
 | Transcribing audio | `pip install faster-whisper` (optional; any SRT, VTT or Whisper JSON transcript also works) |
-| Motion graphics | Node.js 18+ (`morph-clips` installs its own Playwright) |
+| Motion design | Node.js 18+ for Remotion, HyperFrames and `morph-clips` (`setup` installs the engines; `morph-clips` installs its own Playwright) |
 
 ### Ask your agent
 
@@ -131,8 +142,8 @@ the topic, the first 60 to 90 seconds, and publishing.
   that did not produce the work. Drafts and experiments skip review; anything that ships does not.
 - **Measured after publishing.** Retention comes straight from the YouTube Analytics API and is mapped onto your
   chapters or script, so "viewers left at 2:14" becomes "viewers left during the setup paragraph".
-- **Light on context.** No session hooks and nothing injected at startup. All nine skills and six agents add
-  about 1.8k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
+- **Light on context.** No session hooks and nothing injected at startup. All ten skills and six agents add
+  about 2k tokens to a session (`claude plugin details tubecrew`), and a skill's body loads only when it is used.
 
 ## What's inside
 
@@ -140,6 +151,7 @@ the topic, the first 60 to 90 seconds, and publishing.
 
 | Skill | What it does | Script |
 |---|---|---|
+| `setup` | Detects the creator's tools and subscriptions, suggests a stack per station, installs the free pieces | `detect_stack.py` |
 | `produce-video` | Keeps the order and the gates from idea to private upload | - |
 | `find-topic` | Ranks competitor videos by how far they beat their own channel's median; checks search intent and a reachable step for small channels | `outliers.py` |
 | `research-facts` | One `facts.json` with every figure's source, type and date; gates the script against it | `facts_check.py` |
@@ -177,6 +189,29 @@ my-video/
 
 The full contract (verdict lines, hashes and where credentials live) is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Works with your stack
+
+tubecrew does not bundle the tools that make the video. It checks their output, whichever tool you use, and the
+`setup` skill fits the line to what you already have. The production line behind tubecrew was built on these
+projects, and they are the defaults it suggests:
+
+| Station | Project | What it does here | Cost |
+|---|---|---|---|
+| Motion design | [Remotion](https://github.com/remotion-dev/remotion) · [agent skills](https://github.com/remotion-dev/skills) | Videos written in React | Free for individuals and companies with up to 3 employees; company license otherwise |
+| Motion design | [HyperFrames](https://github.com/heygen-com/hyperframes) | Videos written in HTML and CSS, built for agents | Free, Apache-2.0 |
+| Generated clips | [Wan 2.2](https://github.com/Wan-Video/Wan2.2) with [ComfyUI](https://github.com/comfyanonymous/ComfyUI) | Image-to-video clips on your own GPU | Free; 12 GB+ GPU, 24 GB comfortable |
+| Voice | [ElevenLabs](https://elevenlabs.io) | Narration with a cloned or stock voice, music | Subscription |
+| Voice and dubbing | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | Local narration, voice cloning and cross-language dubbing | Free, Apache-2.0; GPU |
+| Second model | [Codex CLI](https://github.com/openai/codex) | Repeats the fact-check with a different model family, read-only | ChatGPT plan or API key |
+| Transcription | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Word timings for the voiceover check and captions | Free, MIT |
+| Research | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Public channel catalogs for outlier research | Free, Unlicense |
+| Measurement | [FFmpeg](https://ffmpeg.org) | Loudness, black frames, freezes and silence in one pass | Free |
+| Upload and analytics | [YouTube Data API](https://developers.google.com/youtube/v3) · [YouTube Analytics API](https://developers.google.com/youtube/analytics) | Private uploads and retention curves | Free quota, your own Google Cloud project |
+
+The full catalog, with when to pick which, is in
+[`skills/setup/references/tools.md`](skills/setup/references/tools.md). Thanks to the authors of all of these
+projects.
+
 ## What tubecrew will never do
 
 - Make a video public, schedule it, or delete anything.
@@ -200,8 +235,9 @@ visibility changes happen in YouTube Studio, by you.
 <summary><strong>Do I need an API key or a paid service?</strong></summary>
 
 No. Topic research, script, voiceover and render checks run locally with free tools. Upload and retention use your
-own Google Cloud OAuth client, which is free to create. Voice generation is up to you: any text-to-speech service,
-or your own recording.
+own Google Cloud OAuth client, which is free to create. Paid services are optional: if you subscribe to ElevenLabs
+or have a ChatGPT plan for Codex, `setup` builds them into your stack; if not, it suggests free local tools such as
+CosyVoice or your own recording.
 </details>
 
 <details>
