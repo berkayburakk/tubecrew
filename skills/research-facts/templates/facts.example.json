@@ -1,0 +1,58 @@
+{
+  "_note": "Example only. Acme Corp is made up and every value, source and URL below is fictional. Replace each entry with a real number and its real source; keep one entry per number the script or the visuals use.",
+  "_types": "primary = the company, regulator or official dataset said it; news = a report about it; estimate = an analyst or model; own-calculation = yours, with the formula in calc using other keys.",
+  "acme_revenue_2025": {
+    "value": 12.5,
+    "unit": "billion $",
+    "type": "primary",
+    "source": "Acme Corp annual report 2025, page 41",
+    "url": "https://example.com/acme/annual-report-2025.pdf",
+    "accessed": "2026-03-02",
+    "as_of": "fiscal year 2025",
+    "quote": "Total revenue was $12.5 billion."
+  },
+  "acme_revenue_2024": {
+    "value": 10.0,
+    "unit": "billion $",
+    "type": "primary",
+    "source": "Acme Corp annual report 2024, page 38",
+    "url": "https://example.com/acme/annual-report-2024.pdf",
+    "accessed": "2026-03-02",
+    "as_of": "fiscal year 2024",
+    "quote": "Total revenue was $10.0 billion."
+  },
+  "acme_revenue_growth_2025": {
+    "value": 25,
+    "unit": "%",
+    "type": "own-calculation",
+    "source": "Own calculation from the two annual reports",
+    "calc": "(acme_revenue_2025 - acme_revenue_2024) / acme_revenue_2024 * 100",
+    "accessed": "2026-03-02",
+    "as_of": "fiscal year 2025 vs 2024"
+  },
+  "acme_buyout_offer": {
+    "value": 40,
+    "unit": "billion $",
+    "type": "news",
+    "source": "Example Daily News, 'Rival weighs offer for Acme'",
+    "url": "https://example.com/news/rival-weighs-acme-offer",
+    "accessed": "2026-03-05",
+    "as_of": "2026-03-04",
+    "quote": "The rival is said to be weighing an offer of about $40 billion."
+  },
+  "acme_market_share": {
+    "value": 18,
+    "unit": "%",
+    "type": "estimate",
+    "source": "Example Research, widget market estimate 2025",
+    "url": "https://example.com/research/widget-market-2025",
+    "accessed": "2026-03-06",
+    "as_of": "calendar year 2025"
+  },
+  "do_not_use": [
+    {
+      "claim": "the largest widget maker in the world",
+      "why": "Only Acme's own press release says so; no independent ranking was found."
+    }
+  ]
+}

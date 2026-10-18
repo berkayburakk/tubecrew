@@ -1,0 +1,27 @@
+{
+  "name": "tubecrew",
+  "version": "0.1.0",
+  "description": "A YouTube production crew for coding agents: evidence-based topics, sourced facts, human-sounding scripts, code gates for voiceover and render, private uploads and retention by scene.",
+  "author": {
+    "name": "berkayburakk",
+    "url": "https://github.com/berkayburakk"
+  },
+  "homepage": "https://github.com/berkayburakk/tubecrew",
+  "repository": "https://github.com/berkayburakk/tubecrew",
+  "license": "MIT",
+  "keywords": ["youtube", "video", "content-creation", "scripts", "retention", "quality-gates"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "tubecrew",
+    "shortDescription": "Make YouTube videos with gates: research, script, render checks, private upload",
+    "longDescription": "tubecrew turns a coding agent into a YouTube production line. Topics come from competitor outliers, every number has a source, scripts are humanized and reviewed, voiceover and render are checked in code, and uploads are private until a human publishes.",
+    "developerName": "berkayburakk",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Find my next video topic from what is working in my niche.",
+      "Check this render before I upload it."
+    ],
+    "websiteURL": "https://github.com/berkayburakk/tubecrew"
+  }
+}

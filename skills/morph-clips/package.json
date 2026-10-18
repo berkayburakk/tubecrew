@@ -1,0 +1,8 @@
+{
+  "name": "morph-clips",
+  "private": true,
+  "description": "Local Playwright install for the morph-clips skill (created by `morph.mjs setup`).",
+  "type": "module",
+  "scripts": {"test": "node --test tests/morph.test.mjs"},
+  "dependencies": {"playwright": "^1.56.0"}
+}

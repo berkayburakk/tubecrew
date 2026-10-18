@@ -1,0 +1,30 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/*TITLE*/ · before / after</title>
+<style>
+:root{--bg:#0f1214;--card:#1b2227;--ink:#eef2f4;--muted:#8a97a0;--accent:#ffc83d;--line:#ffffff1f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Inter,'Segoe UI',system-ui,sans-serif;padding:16px}
+h1{margin:0 0 4px;font-size:20px}p{margin:0 0 12px;color:var(--muted)}
+.modes button{background:var(--card);color:inherit;border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;cursor:pointer;margin-right:6px}
+.modes button.on{border-color:var(--accent);color:var(--accent)}
+#area{margin-top:12px;display:grid;gap:10px}#area.side{grid-template-columns:1fr 1fr}#area.stack{grid-template-columns:1fr}
+#area.wipe{position:relative;display:block}#area.wipe video{width:100%}#area.wipe #b{position:absolute;left:0;top:0;clip-path:inset(0 0 0 var(--p,50%))}
+video{width:100%;background:#000;border-radius:8px;display:block}
+#strip{position:relative;height:34px;margin-top:12px;background:#ffffff0d;border-radius:6px;cursor:pointer}
+#strip i{position:absolute;top:4px;bottom:4px;background:#ffc83d55;border:1px solid var(--accent);border-radius:4px;font:11px Inter,sans-serif;color:var(--ink);padding:2px 4px;overflow:hidden;white-space:nowrap;font-style:normal}
+#head{position:absolute;top:0;bottom:0;width:2px;background:var(--ink)}
+#play{margin-top:10px;background:var(--accent);color:#080d0f;border:0;border-radius:8px;padding:8px 16px;font:600 15px Inter,sans-serif;cursor:pointer}
+@media (max-width:760px){#area.side{grid-template-columns:1fr}}
+</style></head><body>
+<h1>/*TITLE*/</h1><p>Left or top is the original; right or bottom has the clips cut in. In wipe mode, move the mouse.</p>
+<div class="modes"><button data-m="side" class="on">Side by side</button><button data-m="stack">Stacked</button><button data-m="wipe">Wipe</button></div>
+<div id="area" class="side"><video id="a" src="/*ORIGINAL*/" playsinline></video><video id="b" src="/*EDITED*/" playsinline muted></video></div>
+<div id="strip"><div id="head"></div></div><button id="play">Play / pause</button>
+<script>
+const DUR=/*DURATION*/0,MARKS=/*MARKS*/[];const a=document.getElementById('a'),b=document.getElementById('b'),area=document.getElementById('area'),strip=document.getElementById('strip'),head=document.getElementById('head');
+MARKS.forEach(([s,e,id,t])=>{const x=document.createElement('i');x.style.left=(s/DUR*100)+'%';x.style.width=((e-s)/DUR*100)+'%';x.textContent=id+' '+t;x.title=t;strip.appendChild(x);});
+document.querySelectorAll('.modes button').forEach(bt=>bt.onclick=()=>{document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on',x===bt));area.className=bt.dataset.m;});
+area.addEventListener('mousemove',e=>{if(area.className!=='wipe')return;const r=area.getBoundingClientRect();area.style.setProperty('--p',((e.clientX-r.left)/r.width*100)+'%');});
+strip.onclick=e=>{const r=strip.getBoundingClientRect();a.currentTime=b.currentTime=(e.clientX-r.left)/r.width*DUR;};
+document.getElementById('play').onclick=()=>{if(a.paused){b.currentTime=a.currentTime;a.play();b.play();}else{a.pause();b.pause();}};
+(function lock(){if(Math.abs(b.currentTime-a.currentTime)>0.08)b.currentTime=a.currentTime;head.style.left=(a.currentTime/DUR*100)+'%';requestAnimationFrame(lock);})();
+</script></body></html>

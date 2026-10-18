@@ -1,0 +1,33 @@
+<title>03 Checklist panel</title>
+<!-- Placement: panel (transparent ProRes 4444 .mov). Sits in the empty right half of a frame while the speaker
+     stays on screen. Line: "You need three things: a folder, a SKILL.md, and a short description." -->
+<style>
+.ttl{font-size:26px;color:var(--muted);white-space:nowrap}
+.item{position:absolute;left:-230px;height:64px;display:flex;align-items:center;gap:18px;font-size:34px;white-space:nowrap}
+.box{width:44px;height:44px;border-radius:12px;border:3px solid var(--line);display:flex;align-items:center;justify-content:center}
+</style>
+<div data-slot="shape">
+  <div class="L" id="Llist">
+    <div class="a ttl mono" style="left:-230px;top:40px">checklist</div>
+    <div id="items"></div>
+  </div>
+</div><!--/shape-->
+<script>
+const $=id=>document.getElementById(id), B=M.brand;
+// [label, word time]: each row appears on its word, then its box is ticked.
+const IT=[['folder/',0.6],['SKILL.md',1.5],['description',2.4]];
+$('items').innerHTML=IT.map(([n],i)=>`<div class="item" id="i${i}" style="top:${100+i*84}px"><div class="box" id="b${i}"></div><span class="${i<2?'mono':''}">${n}</span></div>`).join('');
+M.scene({
+  W:1920,H:1080,T:4.2,background:null,center:[1420,540],intro:0.1,
+  shapes:{card:{w:540,h:380,r:36,fill:B.shape,zoom:1.3}},
+  start:'card', flow:[],
+  layers:[{el:'Llist',in:0.1,out:null,anchor:'t',update:(t)=>{
+    IT.forEach(([,w],i)=>{
+      M.apply($('i'+i),M.show(t,w,null,{delay:0}));
+      const on=M.spring(t-w-0.35,M.SPRING.FAST[0],M.SPRING.FAST[1]), b=$('b'+i);
+      b.style.background=on>0.5?B.success:'transparent'; b.style.borderColor=on>0.5?B.success:B.line;
+      b.innerHTML=on>0.02?`<div style="transform:scale(${on.toFixed(3)})">${M.icon('check',28,B.canvas,3)}</div>`:'';
+    });
+  }}],
+});
+</script>

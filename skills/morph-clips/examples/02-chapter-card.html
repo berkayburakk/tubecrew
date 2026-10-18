@@ -1,0 +1,31 @@
+<title>02 Chapter card</title>
+<!-- Placement: full (1920x1080), 2-3 s at a chapter change. Protected boxes (e.g. a face cam) are restored in composite.
+     Use a short, universal title (a product or term); it will not be translated by dubbing or captions. -->
+<style>
+.num{font-size:40px;color:var(--canvas);font-weight:700}
+.name{font-size:88px;font-weight:700;letter-spacing:-2px;color:var(--ink);white-space:nowrap}
+.under{position:absolute;height:6px;border-radius:3px;background:var(--accent)}
+</style>
+<div data-slot="shape">
+  <div class="L" id="Lnum"><div class="row mono num" style="left:-26px;top:-24px;font-size:34px">02</div></div>
+  <div class="L" id="Ltitle">
+    <div class="a" style="left:-236px;top:-50px;width:100px;height:100px;border-radius:24px;background:var(--accent);display:flex;align-items:center;justify-content:center"><span class="mono num">02</span></div>
+    <div class="row name" style="left:-104px;top:-58px">Skills</div>
+    <div class="under" id="under" style="left:-104px;top:58px;width:0"></div>
+  </div>
+</div><!--/shape-->
+<script>
+const B=M.brand, under=M.track(0,[[0.95,250,M.SPRING.FAST]]);
+M.scene({
+  W:1920,H:1080,T:2.6,intro:0.1,
+  shapes:{
+    dot:{w:96,h:96,r:48,fill:B.accent,zoom:1.8},
+    card:{w:560,h:220,r:44,fill:B.shape,zoom:1.5},
+  },
+  start:'dot', flow:[[0.55,'card']],
+  layers:[
+    {el:'Lnum',in:0.1,out:0.55},
+    {el:'Ltitle',in:0.55,out:null,update:(t)=>{document.getElementById('under').style.width=Math.max(0,under(t))+'px';}},
+  ],
+});
+</script>

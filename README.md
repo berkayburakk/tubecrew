@@ -1,66 +1,162 @@
-# Claude Code ile YouTube videosu: başlangıç dosyası
+# tubecrew
 
-Berko YouTube kanalındaki **"Claude Code ile YouTube Videosu Nasıl Yapılır?"** videosunda gösterdiğim üretim
-hattının sade hali. Kendi hattınızı kurarken buradan başlayabilirsiniz.
+**A YouTube production crew for your coding agent.** tubecrew turns Claude Code (or Codex) into a production
+line for videos: topics chosen from evidence, every number sourced, scripts that sound like a person, voiceover
+and render checked in code, independent reviewers, private uploads, and a retention post-mortem that names the
+scene where viewers left.
 
-*English version below.*
+*Türkçe: [README.tr.md](README.tr.md)*
 
-## İçinde ne var
+## How it works
 
-| Dosya | Ne |
+A video moves through stations. Each station writes a file, and the next one starts only after a gate passes.
+
+```
+topic ──> research ──> script ──> numbers ──> first 60-90 s ──> voice ──> edit ──> render ──> package ──> upload ──> learn
+  │          │           │          │              │              │                  │                     │          │
+skeptic  facts_check  lint +    facts_check +    creator OK    voice_check      render_check +       upload-checker  retention
+ agent                A/B agent  fact-checker                                    render-auditor       + upload.py    by scene
+```
+
+Three kinds of work, kept apart on purpose:
+
+- **Thinking** (which topic, what story, what looks good) stays with the model and the creator.
+- **Repetition** (counting words, measuring loudness, matching numbers to sources, checking metadata limits) is done
+  by small scripts with exit codes. A script that exits 1 means "fix the work", not "argue with the check".
+- **Reviewing** is done by an agent that did not make the thing: a fact-checker, a script auditor, a render
+  auditor, an upload checker.
+
+## What makes it different
+
+- **Gates, not paragraphs.** When a mistake repeats, it becomes a check in a script instead of a longer
+  instruction. Skills stay short; the agent is not asked to remember 40 rules.
+- **Verdicts bind to bytes.** A render review is valid only for the exact file it judged (SHA-256). Re-render the
+  video and the upload script refuses the old approval.
+- **Every number has a source.** The script may only contain numbers that exist in `facts.json` with a link; a
+  script gate finds the ones that do not.
+- **Nothing publishes itself.** Uploads are private, always. Publishing and scheduling are a human click in
+  YouTube Studio. Your own OAuth client, stored outside the project; no shared keys.
+- **Measures after publishing.** Retention comes straight from the YouTube Analytics API and is laid over your
+  chapters or script, so "people left at 2:14" becomes "people left during the setup paragraph".
+- **Light on context.** No session hooks and nothing injected at startup. All nine skills and six agents add
+  about 1.8k tokens to a session (`claude plugin details tubecrew`); a skill's body loads only when it is used,
+  and most are under 1.5k tokens.
+
+## Installation
+
+### Claude Code
+
+```
+/plugin marketplace add berkayburakk/tubecrew
+/plugin install tubecrew@tubecrew
+```
+
+Skills appear as `tubecrew:<skill>` and agents as `tubecrew:<agent>`. Update later with
+`/plugin update tubecrew`.
+
+### Codex
+
+Copy the skills and the agents into your Codex folders:
+
+```bash
+git clone https://github.com/berkayburakk/tubecrew.git
+cp -r tubecrew/skills/* ~/.codex/skills/          # or your repo's .agents/skills/
+cp tubecrew/codex/agents/*.toml ~/.codex/agents/
+```
+
+A Codex plugin manifest (`.codex-plugin/plugin.json`) is included for plugin-aware Codex builds.
+
+### Any other agent
+
+Every skill is a folder with a `SKILL.md` and its scripts. Copy the folders your agent can read, or paste a
+`SKILL.md` into a chat; you lose the scripts, which are most of the point.
+
+### Requirements
+
+| For | You need |
 |---|---|
-| [`.claude/skills/video-uret/SKILL.md`](.claude/skills/video-uret/SKILL.md) | Videoda gösterdiğim video üretim skill'inin sade hali. Konudan gizli yüklemeye dokuz adım. |
-| [`CLAUDE.md`](CLAUDE.md) | Kural dosyası örneği: tavsiye yok, uydurma kanıt yok, her rakamın kaynağı var; her hata bir ders olarak eklenir. |
-| [`ornek/rakamlar.json`](ornek/rakamlar.json) | Araştırmada her rakamın nasıl tutulduğuna örnek (değerler kurmaca). |
-| [`en/`](en/) | Aynı dosyaların İngilizcesi. |
+| All scripts | Python 3.9+ (`python` on Windows, `python3` on macOS/Linux) |
+| Render and voice checks | `ffmpeg` and `ffprobe` on PATH |
+| Topic research | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) |
+| Upload and retention | `pip install google-auth google-auth-oauthlib requests` and your own Google Cloud OAuth client ([setup guide](skills/upload-private/references/oauth-setup.md)) |
+| Transcribing audio | `pip install faster-whisper` (optional; any SRT/VTT/Whisper JSON transcript also works) |
+| Motion graphics | Node 18+ (`morph-clips` installs its own Playwright) |
 
-## Nasıl kullanılır
+## Quick start
 
-1. Claude Code'u kurun: <https://code.claude.com/docs/en/quickstart>
-2. Video projenizin klasörüne `.claude/` klasörünü ve `CLAUDE.md` dosyasını kopyalayın.
-3. Claude Code'u o klasörde açın ve "video üret: <konu>" yazın.
-4. Skill'i kendi kanalınıza göre düzenleyin: araçlarınızı, ses ayarınızı ve kurallarınızı yazın.
-   Her hatadan sonra `CLAUDE.md`'ye bir ders ekleyin.
+Open your agent in an empty folder and try:
 
-Skill nedir, nasıl yazılır: <https://code.claude.com/docs/en/skills>
+- "Find my next video topic. My niche is space exploration explainers; here are five channels I compete with: ..."
+- "Start a new video project about how a space telescope unfolds."
+- "Check this render before I upload it: render/final.mp4"
+- "Why did people stop watching my video `<video id>`?"
 
-## Videoda kullandığım araçlar
+## What's inside
 
-| Durak | Araç |
-|---|---|
-| Kurulum, senaryo, kurgu | Claude Code: <https://code.claude.com/docs/en/quickstart> |
-| Araştırma doğrulaması, görsel kareler | Codex CLI: <https://learn.chatgpt.com/docs/codex/cli> |
-| Ses klonu ve anlatım | ElevenLabs: <https://elevenlabs.io> |
-| Sesle prompt yazma | Wispr Flow: <https://wisprflow.ai> |
-| Sesi geri dinleme | Whisper: <https://github.com/openai/whisper> (yerelde faster-whisper: <https://github.com/SYSTRAN/faster-whisper>) |
-| Kareden video klip (kendi ekran kartımda) | Wan: <https://github.com/Wan-Video/Wan2.2> |
-| Kodla kurgu | Remotion: <https://github.com/remotion-dev/remotion> |
-| Ses birleştirme, müzik kısma, ses düzeyi | FFmpeg: <https://ffmpeg.org> |
-| Yerel dublaj | CosyVoice: <https://github.com/FunAudioLLM/CosyVoice> |
-| Yükleme | YouTube Data API: <https://developers.google.com/youtube/v3> |
+### Skills
 
-Seedance gibi kredili bulut video modellerini kullanmadım; yapay zekâyla üretilen klipler kendi ekran kartımda, Wan ile.
+| Skill | What it does | Script |
+|---|---|---|
+| `produce-video` | Keeps the order and the gates from idea to private upload | - |
+| `find-topic` | Competitor outliers vs each channel's own median, search intent, reachable step | `outliers.py` |
+| `research-facts` | One `facts.json` with every number's source, type and date; gates the script | `facts_check.py` |
+| `write-script` | Opening built for the first 30 s, humanizing pass against 26 AI-writing patterns | `script_lint.py` |
+| `check-voiceover` | Compares what the voice actually said with the script | `voice_check.py` |
+| `check-render` | Loudness, silent tail, black frames, frozen hook, subtitle timing | `render_check.py` |
+| `upload-private` | Metadata limits, chapter rules, hash-bound verdicts, private resumable upload | `upload.py` |
+| `retention-by-scene` | Opening, cliffs, slide and rewatch bumps per chapter or script section | `retention.py` |
+| `morph-clips` | Motion-graphic B-roll timed to your words: one shape that morphs and never cuts | `morph.mjs` |
 
-## Siz de deneyin (videodaki ipuçları)
+### Review agents
 
-1. Claude'a her seferinde aynı şeyi anlatıyorsanız, onu bir skill'e çevirin.
-2. Yapay zekâdan konu isterken her adayın yanında bir sayı isteyin.
-3. Araştırmada her rakamın yanında link isteyin; linki olmayan rakamı kullanmayın.
-4. Yapay zekânın yazdığı metni başka bir yapay zekâya kontrol ettirin.
-5. Ses üretimi bitince Whisper gibi bir araçla denetleyin.
-6. Görsel üretirken referans verin; yoksa her görsel farklı çıkar.
-7. Yüklemeden önce videoyu bağımsız bir ajana analiz ettirin.
+| Agent | Reviews | Returns |
+|---|---|---|
+| `topic-skeptic` | Topic candidates and their evidence | ALIVE / DEAD per candidate |
+| `fact-checker` | Every number and claim against primary sources | PASS / FAIL table |
+| `script-auditor` | Original vs humanized script, paragraph by paragraph | A / B / fix + must-fix list |
+| `render-auditor` | The final render, frame by frame | PASS / FAIL with timestamps |
+| `upload-checker` | Title, description, chapters, links, disclosure, channel | GO / NO-GO file |
+| `privacy-scanner` | Anything about to leave your machine | CLEAN / LEAK |
 
----
+The maker never reviews its own work. Reviews are for what ships; drafts and experiments skip them.
 
-## English
+## The project folder
 
-The simple version of the production pipeline from the Berko YouTube video **"How to Make a YouTube Video With Claude Code"**.
+One folder per video; every gate writes into `qa/`:
 
-- [`en/.claude/skills/video-produce/SKILL.md`](en/.claude/skills/video-produce/SKILL.md): the video production skill, nine steps from topic to private upload.
-- [`en/CLAUDE.md`](en/CLAUDE.md): a rules file example (no advice, no made-up evidence, every number has a source; every mistake becomes a lesson).
-- [`ornek/rakamlar.json`](ornek/rakamlar.json): an example of how each number is tracked during research (made-up values).
+```
+my-video/
+  facts.json  script.md  upload.json
+  voice/  render/  qa/
+```
 
-How to use: install Claude Code (<https://code.claude.com/docs/en/quickstart>), copy `en/.claude/` and `en/CLAUDE.md`
-into your video project, open Claude Code there and type "produce a video: <topic>". Then adapt the skill to your channel.
-The tool list above applies to the English version as well.
+The exact file contract (verdict lines, hashes, where credentials live) is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## What it will never do
+
+- Make a video public, schedule it, or delete anything.
+- Upload without the render check, the render review and the upload review approving the exact same file.
+- Store tokens or keys in your project, or use anyone's credentials but yours.
+- Watch, like or comment on your own videos. Automated engagement breaks YouTube's rules and can cost the
+  monetization account behind all of your channels.
+- Invent a number, a quote or a result.
+
+## Philosophy
+
+The rules here came from shipping real videos and writing down every mistake. Most of them were caught the
+second time by a script, not by a better prompt. If you add to tubecrew, keep that direction: when something
+goes wrong twice, write the check.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; run `python -m pytest` and
+`claude plugin validate . --strict` before opening a PR.
+
+## Starter kit
+
+New to all of this? [`examples/starter-kit`](examples/starter-kit) is the one-skill version (English and
+Turkish) you can copy into a project in a minute.
+
+## License
+
+MIT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for third-party credits.

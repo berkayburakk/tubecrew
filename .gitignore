@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+skills/morph-clips/node_modules/
+qa/
+tmp/
+*.mp4
+*.mov
+*.wav
+*.m4a
+client_secret*.json
+*token*.json
+.DS_Store
+.ruff_cache/

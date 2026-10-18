@@ -1,0 +1,18 @@
+/* morph-clips page shell. Colours and fonts come from the brand file (--tokens below are injected by `build`). */
+html,body{margin:0;background:var(--canvas);overflow:hidden}
+html.alpha,html.alpha body{background:transparent}
+body.preview{height:100vh;background:#1b1b1b}
+html:not(.alpha) body.preview{background:var(--canvas)}
+#wrap{position:relative;transform-origin:50% 50%}
+body.preview #wrap{position:fixed;left:50%;top:calc(50% - 10px)}
+#stage{position:relative;overflow:hidden;font-family:var(--font-ui);-webkit-font-smoothing:antialiased;color:var(--ink);font-feature-settings:"tnum" 1}
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+#shape{position:absolute;overflow:hidden;isolation:isolate;box-shadow:var(--shadow)}
+html.alpha #shape{box-shadow:none}
+.L{position:absolute;width:0;height:0;transform-origin:0 0}
+.a{position:absolute}
+.row{position:absolute;display:flex;align-items:center;white-space:nowrap}
+.blend{mix-blend-mode:difference}
+.mono{font-family:var(--font-mono)}
+svg{display:block;overflow:visible}
+#cursor{position:absolute;left:0;top:0;height:auto;transform-origin:3px 3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));z-index:10}

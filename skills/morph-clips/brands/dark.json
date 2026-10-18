@@ -1,0 +1,10 @@
+{
+  "name": "dark",
+  "colors": {
+    "canvas": "#0c1013", "shape": "#17212a", "surface": "#1f2c36", "ink": "#eef2f4", "muted": "#8a97a0",
+    "line": "#ffffff1f", "accent": "#ffc83d", "success": "#6fdcae", "error": "#ff7a6b",
+    "cursor": "#eef2f4", "cursorStroke": "#0c1013"
+  },
+  "shadow": "inset 0 0 0 1.5px #ffffff14, 0 18px 50px -18px #000000cc",
+  "fonts": {"ui": {"family":"Inter","files":[{"file":"../fonts/inter-latin-wght-normal.woff2","weight":"100 900"},{"file":"../fonts/inter-latin-ext-wght-normal.woff2","weight":"100 900","range":"U+0100-02AF,U+1E00-1EFF"}]}, "mono": {"family":"JetBrains Mono","files":[{"file":"../fonts/jetbrains-mono-latin-400-normal.woff2"},{"file":"../fonts/jetbrains-mono-latin-ext-400-normal.woff2","range":"U+0100-02AF,U+1E00-1EFF"}]}}
+}

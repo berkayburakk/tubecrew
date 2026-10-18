@@ -1,0 +1,94 @@
+<title>01 Command to context</title>
+<!-- Placement: full (1920x1080 cutaway). Line: "When I type /code-review, Claude looks at its list of skills,
+     and only the chosen skill's SKILL.md is loaded into the context window." Bar widths are ILLUSTRATIVE (relative only). -->
+<style>
+.pr{font-size:40px;color:var(--ink);letter-spacing:-.5px}
+.car{display:inline-block;width:3px;height:42px;background:var(--accent);vertical-align:-8px;margin-left:3px}
+.label{font-size:22px;color:var(--muted);letter-spacing:.4px;white-space:nowrap}
+.item{position:absolute;left:-330px;width:660px;height:84px;border-radius:18px}
+.name{font-size:30px}
+.skeleton{position:absolute;height:10px;border-radius:5px;background:var(--line)}
+.slice{position:absolute;top:0;height:70px;border-radius:12px}
+.tag{position:absolute;top:84px;font-size:20px;color:var(--muted);white-space:nowrap}
+.chip{position:absolute;display:flex;align-items:center;gap:10px;padding:12px 18px;border-radius:14px;background:var(--accent);color:var(--canvas);font-size:24px;font-weight:600;white-space:nowrap}
+</style>
+
+<div data-slot="shape">
+  <div class="L" id="Lprompt">
+    <div class="row" style="left:-268px;top:-22px" id="icon"></div>
+    <div class="row mono pr" style="left:-212px;top:-26px"><span id="typed"></span><span class="car" id="caret"></span></div>
+    <div class="a" id="run" style="left:196px;top:-34px;width:68px;height:68px;border-radius:34px;background:var(--accent);display:flex;align-items:center;justify-content:center"></div>
+  </div>
+  <div class="L" id="Llist">
+    <div class="a label mono" style="left:-330px;top:34px">skills · description</div>
+    <div class="item" id="hl" style="top:82px;border:2px solid var(--accent);background:transparent"></div>
+    <div id="items"></div>
+  </div>
+  <div class="L" id="Lctx">
+    <div class="a label mono" style="left:-400px;top:36px">context window</div>
+    <div class="a" id="bar" style="left:-400px;top:100px;width:800px;height:70px;border-radius:12px;background:var(--surface)"></div>
+    <div class="chip mono" id="chip"></div>
+  </div>
+</div><!--/shape-->
+
+<script>
+const $=id=>document.getElementById(id), B=M.brand;
+const COMMAND='/code-review';
+$('icon').innerHTML=M.icon('terminal',44,B.muted);
+$('run').innerHTML=M.icon('arrow',34,B.canvas,2.6);
+// The list: skill names stay as written; each description is a skeleton line, not invented text.
+const SK=[['code-review',2.35],['pdf',2.5],['deploy',2.65]];
+$('items').innerHTML=SK.map(([n],i)=>`<div class="a" id="s${i}" style="left:0;top:${82+i*100}px">
+  <div class="row" style="left:-300px;top:14px">${M.icon('book',30,B.success)}</div>
+  <div class="row mono name" style="left:-252px;top:6px">${n}</div>
+  <div class="skeleton" style="left:-252px;top:56px;width:${[330,250,290][i]}px"></div></div>`).join('');
+// Context bar: [label, width, colour, time]. Widths are relative, not measured tokens.
+const SL=[['CLAUDE.md',150,B.muted,4.05,.85],['skills',92,B.success,4.2,1],['chat',200,B.muted,4.35,.4]];
+let x0=0;
+$('bar').innerHTML=SL.map(([e,w,c,,op],i)=>{const h=`<div class="slice" id="d${i}" style="left:${x0}px;width:${w-6}px;background:${c};opacity:${op}"></div><div class="tag mono" id="e${i}" style="left:${x0}px">${e}</div>`;x0+=w;return h;}).join('')
+  +`<div class="slice" id="dSkill" style="left:${x0}px;width:0;background:${B.accent}"></div><div class="tag mono" id="eSkill" style="left:${x0}px;color:${B.accent}">SKILL.md</div>`;
+const SKILL_X=x0;
+$('chip').innerHTML=M.icon('file',26,B.canvas,2.4)+'SKILL.md';
+
+// Timeline in clip-local seconds. In a real clip each of these sits on a spoken word.
+const T_ENTER=1.9, T_LIST=2.1, T_PICK=3.35, T_CTX=3.9, T_DRAG=[5.0,5.8];
+const cursorKeys=[[0,330,130],[1.2,330,130],[1.75,230,0],[2.3,230,0],[3.0,-170,-100],[3.6,-170,-100],[4.5,-250,120],[4.95,-262,112],[T_DRAG[1],SKILL_X-400+70,-50],[6.6,SKILL_X-400+170,40]];
+const cursor=M.path(cursorKeys);
+// While dragged, the chip follows the cursor; on release it springs into the bar.
+const chipX=t=>t<T_DRAG[0]?-300:t<T_DRAG[1]?cursor(t).x-40:SKILL_X-400+10;
+const chipY=t=>t<T_DRAG[0]?96:t<T_DRAG[1]?cursor(t).y-18:-60;
+const skillW=M.track(0,[[T_DRAG[1]+0.05,190,M.SPRING.FAST]]);
+const hlOpen=M.track(0,[[T_PICK,1,M.SPRING.FAST]]);
+const runPop=M.track(0,[[1.6,1,M.SPRING.FAST],[T_ENTER+0.1,0]]);
+
+M.scene({
+  W:1920,H:1080,T:7.4,intro:0.15,
+  shapes:{
+    prompt:{w:600,h:112,r:56,fill:B.shape,zoom:2.0},
+    list:{w:760,h:420,r:34,fill:B.shape,zoom:1.7},
+    ctx:{w:900,h:360,r:34,fill:B.shape,zoom:1.6},
+  },
+  start:'prompt', flow:[[T_LIST,'list'],[T_CTX,'ctx']],
+  press:[T_ENTER],
+  layers:[
+    {el:'Lprompt',in:0.15,out:T_LIST,update:(t)=>{
+      const n=Math.round(M.clamp((t-0.45)/0.9)*COMMAND.length);
+      M.text($('typed'),COMMAND.slice(0,n));
+      $('caret').style.opacity=(n<COMMAND.length||Math.floor(t*2.4)%2===0)?1:0;
+      $('run').style.transform=`scale(${1+0.12*runPop(t)})`;
+    }},
+    {el:'Llist',in:T_LIST,out:T_CTX,anchor:'t',update:(t)=>{
+      SK.forEach(([,tin],i)=>M.apply($('s'+i),M.show(t,tin,null,{delay:0})));
+      const a=hlOpen(t), h=$('hl');
+      h.style.opacity=M.clamp(a*1.4); h.style.width=(660*M.clamp(0.3+0.7*a))+'px'; h.style.left='-330px';
+    }},
+    {el:'Lctx',in:T_CTX,out:null,anchor:'t',update:(t)=>{
+      SL.forEach(([,w,,tin],i)=>{const a=M.spring(t-tin,M.SPRING.FAST[0],M.SPRING.FAST[1]);$('d'+i).style.width=Math.max(0,(w-6)*a)+'px';$('e'+i).style.opacity=M.clamp((t-tin-0.1)/0.25);});
+      $('dSkill').style.width=Math.max(0,skillW(t)-6)+'px'; $('eSkill').style.opacity=M.clamp((t-T_DRAG[1]-0.15)/0.25);
+      const c=$('chip'), v=M.show(t,4.55,T_DRAG[1]+0.05,{exit:0.1});
+      if(M.apply(c,v)){c.style.left=chipX(t)+'px'; c.style.top=(chipY(t)+180)+'px';}
+    }},
+  ],
+  cursor:{size:44,clicks:[T_ENTER,T_PICK],drags:[T_DRAG],keys:cursorKeys},
+});
+</script>

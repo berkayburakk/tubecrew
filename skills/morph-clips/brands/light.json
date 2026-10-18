@@ -1,0 +1,10 @@
+{
+  "name": "light",
+  "colors": {
+    "canvas": "#eceee9", "shape": "#ffffff", "surface": "#f2f3f0", "ink": "#111416", "muted": "#6b7270",
+    "line": "#0000001a", "accent": "#2f6bff", "success": "#1e9e6a", "error": "#e5484d",
+    "cursor": "#111416", "cursorStroke": "#ffffff"
+  },
+  "shadow": "0 1px 2px rgba(20,22,24,.06), 0 12px 32px -10px rgba(20,22,24,.18)",
+  "fonts": {"ui": {"family":"Inter","files":[{"file":"../fonts/inter-latin-wght-normal.woff2","weight":"100 900"},{"file":"../fonts/inter-latin-ext-wght-normal.woff2","weight":"100 900","range":"U+0100-02AF,U+1E00-1EFF"}]}, "mono": {"family":"JetBrains Mono","files":[{"file":"../fonts/jetbrains-mono-latin-400-normal.woff2"},{"file":"../fonts/jetbrains-mono-latin-ext-400-normal.woff2","range":"U+0100-02AF,U+1E00-1EFF"}]}}
+}
