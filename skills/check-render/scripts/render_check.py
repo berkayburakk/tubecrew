@@ -94,7 +94,9 @@ TAIL_WINDOW_S = 25.0           # the last 25 s are the tail in the report (end s
 MUSIC_HOLE_WARN_S = 0.5        # half a second of dead air in music is audible
 MUSIC_HOLE_FAIL_S = 1.0        # a full second sounds like a broken mix
 MUSIC_FADE_S = 3.0             # the music may fade out over the last 3 s
-SILENCE_TAG_TOTAL = "tc_total"  # silencedetect instance names: two detectors share one log
+# Instance names for logs that carry them. ffmpeg 6.x prints only "[silencedetect @ 0x...]", so two detectors in
+# one pass cannot be told apart there: total silence is measured in its own audio-only pass instead.
+SILENCE_TAG_TOTAL = "tc_total"
 SILENCE_TAG_DEAD = "tc_dead"
 
 LUFS_WARN_LOW, LUFS_WARN_HIGH = -16.0, -12.0   # YouTube normalizes to about -14 LUFS; stay near it
@@ -1103,8 +1105,8 @@ def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool =
                      video_index: int | None = None, audio_index: int | None = None,
                      music: bool = False) -> list[str]:
     """One decode pass. Black/freeze detection and silence/loudness go to a null output; with `motion` a second
-    branch of the picture goes to stdout as raw 96x54 gray frames at 4 fps. Two named silencedetect instances run
-    in the audio chain: total silence (-60 dB) and dead air (-50 dB; shorter minimum with `music`)."""
+    branch of the picture goes to stdout as raw 96x54 gray frames at 4 fps. The audio chain detects dead air
+    (-50 dB; shorter minimum with `music`); total silence (-60 dB) has its own pass, build_total_silence_cmd."""
     fps, width = FAST_SAMPLE if fast else FULL_SAMPLE
     dead_min = MUSIC_HOLE_WARN_S if music else SILENCE_MIN_S
     vin = f"[0:{video_index}]" if video_index is not None else "[0:v:0]"
@@ -1119,8 +1121,7 @@ def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool =
         else:
             graph.append(f"{vin}{detect}[vq]")
     if has_audio:
-        graph.append(f"{ain}silencedetect@{SILENCE_TAG_TOTAL}=noise={TOTAL_SILENCE_DB}dB:d={TOTAL_SILENCE_MAX_S:g},"
-                     f"silencedetect@{SILENCE_TAG_DEAD}=noise={SILENCE_NOISE_DB}dB:d={dead_min:g},"
+        graph.append(f"{ain}silencedetect=noise={SILENCE_NOISE_DB}dB:d={dead_min:g},"
                      "ebur128=peak=true:framelog=quiet[aq]")
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-filter_complex", ";".join(graph)]
     cmd += ["-map", "[vq]"] if has_video else ["-vn"]
@@ -1131,9 +1132,18 @@ def build_decode_cmd(video: Path, has_video: bool, has_audio: bool, fast: bool =
     return cmd
 
 
+def build_total_silence_cmd(video: Path, audio_index: int | None = None) -> list[str]:
+    """Audio-only pass for total silence (-60 dB). Separate from the main pass because older ffmpeg logs do not
+    say which of two silencedetect filters wrote a line; decoding only the audio keeps it cheap."""
+    stream = f"0:{audio_index}" if audio_index is not None else "0:a:0"
+    return ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-map", stream, "-vn",
+            "-af", f"silencedetect=noise={TOTAL_SILENCE_DB}dB:d={TOTAL_SILENCE_MAX_S:g}", "-f", "null", "-"]
+
+
 def measure(video: Path, fast: bool = False, hook_seconds: float = DEFAULT_HOOK_S,
             music: bool = False) -> tuple[dict, str | None]:
-    """Run ffprobe and one ffmpeg decode pass. Returns (measured, decode_error or None)."""
+    """Run ffprobe, one ffmpeg decode pass and an audio-only total-silence pass. Returns (measured, decode_error
+    or None)."""
     info = probe(video)
     measured = dict(info)
     measured.update({"black": [], "freezes": [], "silences": [], "total_silences": [], "lufs": None,
@@ -1147,8 +1157,11 @@ def measure(video: Path, fast: bool = False, hook_seconds: float = DEFAULT_HOOK_
     audio_end = info["audio_duration"] or info["duration"]
     measured["black"] = parse_blackdetect(err)
     measured["freezes"] = parse_freezedetect(err, video_end)
-    measured["silences"] = parse_silencedetect(err, audio_end, tag=SILENCE_TAG_DEAD)
-    measured["total_silences"] = parse_silencedetect(err, audio_end, tag=SILENCE_TAG_TOTAL)
+    measured["silences"] = parse_silencedetect(err, audio_end)
+    if info["has_audio"]:
+        _code, _out, total_err = _run_bytes(build_total_silence_cmd(video, info.get("audio_index")),
+                                            FFMPEG_TIMEOUT_S)
+        measured["total_silences"] = parse_silencedetect(total_err, audio_end)
     loud = parse_loudness(err) if info["has_audio"] else None
     if loud:
         measured.update(loud)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - 2026-10-18
+
+- `render_check.py`: total silence (-60 dB) is measured in its own audio-only pass. ffmpeg 6.x does not name the
+  filter in its log, so two silence detectors in one pass could not be told apart and 0.3.1 missed silences there.
+  Tested on ffmpeg 6.1 and 8.1.
+
 ## 0.3.1 - 2026-10-18
 
 - New `transcripts.py` (free, yt-dlp): competitor captions as clean timestamped text, a manifest that skips videos

@@ -196,13 +196,15 @@ def test_decode_command_full_and_fast():
     full = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, True))
     assert "fps=5,scale=320:-2" in full and "blackdetect=d=0.3:pix_th=0.10" in full
     assert "freezedetect=n=0.003:d=2" in full
-    assert "silencedetect@tc_total=noise=-60dB:d=1," in full          # total silence
-    assert "silencedetect@tc_dead=noise=-50dB:d=1.5," in full         # dead air; shorter pauses are speech rhythm
+    assert "silencedetect=noise=-50dB:d=1.5," in full                 # dead air; shorter pauses are speech rhythm
+    assert "-60dB" not in full                                          # total silence has its own pass
+    total = rc.build_total_silence_cmd(Path("v.mp4"), audio_index=2)
+    assert "silencedetect=noise=-60dB:d=1" in total and "0:2" in total and "-vn" in total
     assert "ebur128=peak=true" in full
     fast = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, False, fast=True))
     assert "fps=2,scale=160:-2" in fast and "-an" in fast
     music = " ".join(rc.build_decode_cmd(Path("v.mp4"), True, True, music=True))
-    assert "silencedetect@tc_dead=noise=-50dB:d=0.5," in music        # music-only: half a second is a hole
+    assert "silencedetect=noise=-50dB:d=0.5," in music                # music-only: half a second is a hole
 
 
 def test_decode_command_motion_branch_goes_to_stdout_at_the_calibrated_sampling():
