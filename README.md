@@ -16,7 +16,7 @@ Shorts, upload and analytics.**
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [What's inside](#whats-inside) · [Works with](#works-with-your-stack) · [Safety](#what-tubecrew-will-never-do) · [FAQ](#faq) · [Contributing](#contributing)
+[Watch the video](#watch) · [Quick start](#quick-start) · [How it works](#how-it-works) · [What's inside](#whats-inside) · [Works with](#works-with-your-stack) · [Safety](#what-tubecrew-will-never-do) · [FAQ](#faq) · [Contributing](#contributing)
 
 <code>/plugin marketplace add berkayburakk/tubecrew</code>
 
@@ -26,6 +26,20 @@ Shorts, upload and analytics.**
 > **YouTube automation without the slop.** tubecrew never publishes on its own. Uploads are always private. A video
 > goes public only when you publish it in YouTube Studio, or when you write a time into `upload.json` and pass
 > `--schedule` yourself.
+
+<a id="watch"></a>
+## 📺 Watch it in action
+
+<div align="center">
+
+<a href="https://www.youtube.com/watch?v=AYPx7yJmbNg">
+  <img src="https://img.youtube.com/vi/AYPx7yJmbNg/maxresdefault.jpg" alt="Claude Code ile YouTube Videosu Nasıl Yapılır? (watch on YouTube)" width="640">
+</a>
+
+**[Claude Code ile YouTube Videosu Nasıl Yapılır?](https://www.youtube.com/watch?v=AYPx7yJmbNg)**<br>
+<sub>How to make a YouTube video with Claude Code: the full production line, start to finish (in Turkish).</sub>
+
+</div>
 
 ---
 
